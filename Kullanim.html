@@ -1,10 +1,40 @@
-<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Usage Widget · Kullanım</title>
-<style>body{margin:60px auto;padding:0 24px;max-width:720px;background:#151a23;color:#dce2eb;font:16px/1.7 'Segoe UI',sans-serif}h1{color:#fff;font-size:32px}h2{margin-top:32px;color:#85c9b7;font-size:20px}a{color:#9fdccb}code{background:#26303f;padding:3px 6px;border-radius:5px}.note{border-left:3px solid #d8ad8f;padding:12px 20px;background:#1c222d}li{margin:8px 0}</style>
-<h1>Kullanımın, bir bakışta.</h1><p>Claude ve Codex hesap kotalarını gösteren yerel Windows göstergesi.</p>
-<h2>Açma ve kullanma</h2><ul><li>Bu klasördeki <b>Usage Widget</b> kısayoluna çift tıkla.</li><li>Küçük kapsülün üzerine gelince ayrıntılar açılır. Başlık alanını sürükleyerek taşı.</li><li><b>◇</b> ayrıntıları açık tutar. <b>Esc</b> küçültür. <b>×</b> uygulamayı kapatır.</li><li>Bilgiler 5 dakikada bir alınır. <b>Yenile</b> elle kontrol eder; istekler arasında en az 1 dakika bırakılır.</li><li>Yüzdeler <b>kullanılan</b> kotadır. Gri renk ve “Eski veri” etiketi güncel bağlantı olmadığını veya kota süresinin dolduğunu belirtir.</li></ul>
-<h2>Claude masaüstü hesabını bağlama</h2><ol><li>Göstergeyi açıp Claude kartındaki <b>Claude’u bağla</b> düğmesine bas.</li><li>Açılan giriş akışında <b>Claude masaüstü uygulamasında kullandığın aynı hesabı</b> seç.</li><li>Giriş tamamlandıktan sonra göstergede <b>Yenile</b> düğmesine bas. Son kontrolden 1 dakika geçmediyse sonraki otomatik kontrolü bekle.</li></ol>
-<div class="note">Claude bağlantısı bu bilgisayardaki Claude Code oturumunu kullanır; gösterilen kota o hesaba aittir. Masaüstü uygulamasındaki hesabı otomatik karşılaştırmaz. Oturum süresi dolarsa Claude Code’da oturumu yenilemen gerekebilir. Gösterge oturum anahtarlarını kendisi yenilemez.</div>
-<h2>Veriler ve bağlantılar</h2><p>Codex, resmî yerel App Server üzerinden okunur. Claude, mevcut oturumla Anthropic’in kullanım adresine salt okunur istek gönderir. Claude bağlantısı herkese açık, garantili bir API sözleşmesine dayanmaz; sağlayıcı değişiklikleri uyarlama gerektirebilir.</p><p>Şifre, konuşma içeriği ve API anahtarı istenmez. Claude oturum anahtarı yalnızca bellekte kullanılır ve Anthropic’e iletilir; widget dosyalarına veya günlüklere yazılmaz. Model çağrısı yapılmaz. Yerel önbellekte yalnızca kota yüzdeleri, zamanlar ve bağlantı durumları saklanır.</p>
-<h2>Bu ilk sürüm</h2><p>İki sağlayıcı, kullanım halkaları, kota çubukları, yenilenme süreleri, sürükleme, sabitleme, otomatik yenileme ve sistem tepsisi menüsü bulunur. Windows açılışında otomatik başlatma ve bildirimler eklenmemiştir.</p>
-<h2>Kaldırma</h2><p>Göstergeyi × ile kapat. Uygulama klasörünü ve <code>%LOCALAPPDATA%\UsageWidget</code> klasörünü kaldırabilirsin. Uygulama başlangıç kaydı eklemez; Claude ve Codex ayarlarını değiştirmez.</p>
-<p><a href="https://learn.chatgpt.com/docs/app-server">OpenAI App Server belgesi</a> · <a href="https://github.com/steipete/CodexBar/blob/main/docs/claude.md">Claude bağlantısı için teknik referans</a></p></html>
+<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Usage Notch · Kullanım</title>
+<style>body{margin:60px auto;padding:0 24px;max-width:720px;background:#101410;color:#dfe5da;font:16px/1.7 'Segoe UI',sans-serif}h1{color:#fff;font-size:32px;margin-bottom:4px}h2{margin-top:34px;color:#9fd08a;font-size:19px;letter-spacing:.02em}a{color:#b7e0a5}code,kbd{background:#1f261e;padding:2px 6px;border-radius:5px;font-size:14px}.note{border-left:3px solid #f2b84b;padding:12px 20px;background:#171c16}li{margin:7px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}</style>
+<h1>Kullanımın, bir bakışta.</h1><p>Ekran kenarında duran küçük bir çentik: Claude ve Codex kotaları ile ajan oturumlarının durumu.</p>
+
+<h2>Çentik</h2><ul>
+<li><b>Dinlenme:</b> Her sağlayıcı için küçük halka ve kullanılan yüzde (<code>%42</code>).</li>
+<li><b>Üzerine gel:</b> Çentik açılır, büyük halkalar görünür. Fareyi çekince katlanır.</li>
+<li><b>Halkanın üzerinde bekle:</b> Kart açılır — kota pencereleri, sıfırlanma zamanları, ajan oturumları.</li>
+<li><b>Halkaya tıkla:</b> Kart sabitlenir (<b>SABİT</b>). Tekrar tıkla ya da uzaklaş, çözülür.</li>
+<li><b>◐</b> ton rafını açar: üç ton, vurgu rengi, <b>↻</b> yenile, <b>⚙</b> ayarlar.</li>
+<li><kbd>Alt</kbd> + sürükle: çentiği başka bir kenara veya monitöre taşı.</li>
+<li>Sistem tepsisindeki halka simgesi: sol tık çentiği gösterir; sağ tık menüsünde Ayarlar, Şimdi yenile ve Çıkış bulunur.</li></ul>
+
+<h2>Renkler</h2><p>Renk durumu, sayı kullanılan kotayı gösterir.</p><ul>
+<li><span class="dot" style="background:#9fd08a"></span>Vurgu rengi: normal</li>
+<li><span class="dot" style="background:#f2b84b"></span>Sarı: %75 ve üzeri</li>
+<li><span class="dot" style="background:#f2705e"></span>Kırmızı: %90 ve üzeri</li>
+<li><span class="dot" style="background:#6f776c"></span>Gri: eski veri, bağlantı yok veya kota süresi doldu</li></ul>
+<p>Halkanın köşesindeki nokta: vurgu ve nabız = ajan çalışıyor, sarı = seni bekliyor, gri = yakın zamanda bitti.</p>
+
+<h2>Ajan oturumları</h2><p>Claude Code ve Codex CLI'nin bu bilgisayardaki oturum kayıtları okunur; kartta proje klasörünün adı, durum ve süre görünür. Bir oturum bitince ya da onay beklemeye geçince çentik birkaç saniyeliğine kendiliğinden açılır (Ayarlar'dan kapatılabilir, istersen ses de çalar).</p>
+<div class="note">Durum tahminidir: araç çağrısından sonra 30 saniye kayıt gelmezse “Seni bekliyor” yazar. Uzun süren bir derleme veya test de bu şekilde görünebilir. Konuşma içeriği okunmaz ya da saklanmaz.</div>
+
+<h2>Ayarlar</h2><ul>
+<li><b>Kenar:</b> Üst, Alt, Sol, Sağ.</li>
+<li><b>Yüzey:</b> Düz siyah, Koyu cam, Cam. (Windows'ta gerçek bulanıklık yok; cam görünümü yarı saydamlıkla verilir.)</li>
+<li><b>Ton:</b> Mürekkep, Grafit, Kağıt (açık renk palet).</li>
+<li><b>Vurgu rengi, Boyut</b> (Küçük/Orta/Büyük), <b>Görünürlük</b> (Her zaman / Üzerine gelince — kenarda ince görünmez şerit).</li>
+<li><b>Tam ekran uygulamada gizlen:</b> sunum, video vb. sırasında çentik kaybolur.</li>
+<li><b>Sağlayıcılar:</b> Kullanmadığın sağlayıcıyı kapat; sorgulanmaz ve ölçümü silinir.</li></ul>
+
+<h2>Claude hesabını bağlama</h2><ol>
+<li>Claude kartındaki <b>Claude’u bağla ↗</b> düğmesine bas.</li>
+<li>Açılan girişte Claude masaüstünde kullandığın <b>aynı hesabı</b> seç.</li>
+<li>Giriş bitince ton rafında veya kartta <b>↻</b> ile yenile. Son denemeden bu yana 1 dakika geçmediyse bir sonraki otomatik kontrolü bekle.</li></ol>
+
+<h2>Veriler</h2><p>Bilgiler 5 dakikada bir alınır. Codex resmî yerel App Server üzerinden, Claude mevcut Claude Code oturumuyla Anthropic'in kullanım adresinden okunur (herkese açık, garantili bir API sözleşmesi değildir). Şifre, API anahtarı veya konuşma içeriği saklanmaz; yerel önbellekte yalnızca yüzdeler, zamanlar ve bağlantı durumu tutulur.</p>
+
+<h2>Kaldırma</h2><p>Tepsi menüsünden <b>Çıkış</b>. Uygulama klasörünü ve <code>%LOCALAPPDATA%\UsageWidget</code> klasörünü silmen yeterli; başlangıç kaydı eklenmez, Claude ve Codex ayarları değiştirilmez.</p>
+<p><a href="https://supernotchy.com/">Tasarım örneği: Super Notchy</a> · <a href="https://learn.chatgpt.com/docs/app-server">OpenAI App Server belgesi</a></p></html>

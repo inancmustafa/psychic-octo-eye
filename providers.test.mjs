@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { percent, normalizeCodex, normalizeClaude, providerFailure, providerResult } from './providers.mjs';
+import { percent, normalizeCodex, normalizeClaude, providerFailure, providerResult, enabledProviders } from './providers.mjs';
 
 test('missing quotas are not fabricated as zero', () => {
   for (const value of [null, undefined, '', '0', NaN, -1, Infinity]) assert.equal(percent(value), null);
@@ -36,4 +36,15 @@ test('network errors retain a timestamped stale reading; auth errors clear it', 
 });
 test('rate-limit backoff preserves provider retry time', () => {
   assert.equal(providerFailure('Claude','rate_limited',null,1000,900000).nextAttemptAt,901000);
+});
+test('disabled providers are skipped; missing preferences keep both on', () => {
+  assert.deepEqual(enabledProviders({}), ['codex', 'claude']);
+  assert.deepEqual(enabledProviders(null), ['codex', 'claude']);
+  assert.deepEqual(enabledProviders({ providers: { claude: false } }), ['codex']);
+  assert.deepEqual(enabledProviders({ providers: { codex: false, claude: true } }), ['claude']);
+  assert.deepEqual(enabledProviders({ providers: 'bozuk' }), ['codex', 'claude']);
+});
+test('Claude window labels match the notch card wording', () => {
+  const result = normalizeClaude({ five_hour: { utilization: 10, resets_at: null }, seven_day_sonnet: { utilization: 3, resets_at: null } });
+  assert.deepEqual(result.map(w => w.label), ['Oturum · 5 saat', 'Haftalık · Sonnet']);
 });

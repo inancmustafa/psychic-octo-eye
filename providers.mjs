@@ -26,8 +26,8 @@ export function normalizeCodex(result) {
 }
 
 export function normalizeClaude(result) {
-  return [['five_hour', '5 saatlik', 300], ['seven_day', 'Haftalık', 10080],
-    ['seven_day_sonnet', 'Sonnet · haftalık', 10080], ['seven_day_opus', 'Opus · haftalık', 10080]]
+  return [['five_hour', 'Oturum · 5 saat', 300], ['seven_day', 'Haftalık · tüm modeller', 10080],
+    ['seven_day_sonnet', 'Haftalık · Sonnet', 10080], ['seven_day_opus', 'Haftalık · Opus', 10080]]
     .flatMap(([id, label, minutes]) => {
       const w = result[id];
       const normalized = w && quotaWindow(id, label, w.utilization, w.resets_at, minutes);
@@ -45,4 +45,10 @@ export function providerFailure(name, kind, previous, now = Date.now(), retryMs 
   return { name, status: clear ? kind : 'stale', windows: clear ? [] : previous?.windows ?? [],
     updatedAt: clear ? null : previous?.updatedAt ?? null, attemptedAt: now, error: kind,
     nextAttemptAt: now + Math.max(60000, retryMs) };
+}
+
+// Kullanıcı arayüzden kapattığı sağlayıcıyı sorgulamaz; eksik ya da bozuk tercih "açık" sayılır.
+export function enabledProviders(prefs) {
+  const flags = prefs && typeof prefs.providers === 'object' && prefs.providers !== null ? prefs.providers : {};
+  return ['codex', 'claude'].filter(id => flags[id] !== false);
 }

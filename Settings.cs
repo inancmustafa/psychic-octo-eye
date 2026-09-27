@@ -1,0 +1,220 @@
+﻿using System;
+using System.Linq;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using Shapes = System.Windows.Shapes;
+
+// Ayarlar penceresi: Super Notchy'deki tercih panelinin karşılığı.
+// Her değişiklik anında uygulanır ve preferences.json'a yazılır; ayrı "Kaydet" adımı yoktur.
+internal sealed partial class Widget
+{
+    private static readonly string[] AccentPresets = { "#9FD08A", "#6FD3B8", "#7AB8FF", "#B69CFF", "#F2A77E", "#F7D56B" };
+
+    private void OpenSettings()
+    {
+        if (settingsWindow != null)
+        {
+            if (settingsWindow.WindowState == WindowState.Minimized) settingsWindow.WindowState = WindowState.Normal;
+            settingsWindow.Activate();
+            return;
+        }
+        settingsWindow = new Window
+        {
+            Title = "Usage Notch · Ayarlar", WindowStyle = WindowStyle.None, AllowsTransparency = true, Background = Brushes.Transparent,
+            ResizeMode = ResizeMode.NoResize, SizeToContent = SizeToContent.Height, Width = 404, Topmost = true, ShowInTaskbar = true,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen, UseLayoutRounding = true, SnapsToDevicePixels = true,
+            FontFamily = Window.FontFamily
+        };
+        settingsWindow.KeyDown += (s, e) => { if (e.Key == Key.Escape) settingsWindow.Close(); };
+        settingsWindow.Closed += delegate { settingsWindow = null; };
+        settingsWindow.Content = BuildSettings();
+        settingsWindow.Show();
+        settingsWindow.Activate();
+    }
+
+    // Tema, kenar veya sürükleme sonrası pencere içeriğini güncel değerlerle yeniden kur
+    private void RebuildSettings()
+    {
+        if (settingsWindow == null) return;
+        settingsWindow.Content = BuildSettings();
+    }
+
+    private FrameworkElement BuildSettings()
+    {
+        var body = new StackPanel { Margin = new Thickness(20, 0, 20, 16) };
+
+        // Başlık: sürüklenebilir alan + kapat
+        var header = new DockPanel { Margin = new Thickness(20, 16, 14, 8) };
+        var close = IconButton("✕", 12, "Kapat", delegate { if (settingsWindow != null) settingsWindow.Close(); });
+        DockPanel.SetDock(close, Dock.Right);
+        header.Children.Add(close);
+        var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        var mark = new RingView(16, 3, 0, false, theme);
+        mark.Set(68, theme.Accent);
+        mark.Root.Margin = new Thickness(0, 0, 10, 0);
+        title.Children.Add(mark.Root);
+        title.Children.Add(Ui.T("Usage Notch", 15, theme.Text, FontWeights.SemiBold));
+        title.Children.Add(new TextBlock { Text = "  ayarlar", FontSize = 15, Foreground = Ui.B(theme.Faint), VerticalAlignment = VerticalAlignment.Bottom });
+        // Yalnızca başlık alanı sürüklenir; kapat düğmesinin tıklaması etkilenmez
+        var grip = new Border { Background = Ui.Hit, Cursor = Cursors.SizeAll, Child = title };
+        grip.MouseLeftButtonDown += (s, e) => { if (e.ButtonState == MouseButtonState.Pressed && settingsWindow != null) settingsWindow.DragMove(); };
+        header.Children.Add(grip);
+
+        body.Children.Add(Section("KENAR"));
+        body.Children.Add(Segmented(new[] { "top", "bottom", "left", "right" }, new[] { "Üst", "Alt", "Sol", "Sağ" }, prefs.Edge, value =>
+        {
+            prefs.Edge = value;
+            prefs.Offset = 0.5;
+            Changed();
+        }));
+        body.Children.Add(Hint("Çentiği taşımak için Alt tuşunu basılı tutup sürükle; bıraktığın yere en yakın kenara yapışır."));
+
+        body.Children.Add(Section("YÜZEY"));
+        body.Children.Add(Segmented(new[] { "solid", "dark", "glass" }, new[] { "Düz siyah", "Koyu cam", "Cam" }, prefs.Surface, value => { prefs.Surface = value; Changed(); }));
+        if (prefs.Surface == "glass") body.Children.Add(Hint("Windows'ta arka plan bulanıklığı yok; cam, yarı saydam katman ve ışık kenarıyla taklit edilir."));
+
+        body.Children.Add(Section("TON"));
+        body.Children.Add(Segmented(Theme.Tones, Theme.Tones.Select(t => Theme.ToneName(t)).ToArray(), prefs.Tone, value => { prefs.Tone = value; Changed(); }));
+
+        body.Children.Add(Section("VURGU RENGİ"));
+        var accents = new WrapPanel { Orientation = Orientation.Horizontal };
+        bool custom = !AccentPresets.Contains(prefs.Accent);
+        foreach (string hex in AccentPresets)
+        {
+            string selected = hex;
+            accents.Children.Add(Swatch(Ui.Hex(hex), prefs.Accent == hex, hex, delegate { prefs.Accent = selected; Changed(); }));
+        }
+        if (custom) accents.Children.Add(Swatch(Ui.Parse(prefs.Accent, theme.Accent), true, prefs.Accent, PickAccent));
+        var pick = PillButton("Özel…", PickAccent);
+        pick.Margin = new Thickness(8, 1, 0, 0);
+        pick.VerticalAlignment = VerticalAlignment.Center;
+        accents.Children.Add(pick);
+        body.Children.Add(accents);
+        body.Children.Add(Hint("Renk durumu gösterir: vurgu normal, sarı %75+, kırmızı %90+, gri eski veri."));
+
+        body.Children.Add(Section("BOYUT"));
+        body.Children.Add(Segmented(new[] { "s", "m", "l" }, new[] { "Küçük", "Orta", "Büyük" }, prefs.Size, value => { prefs.Size = value; Changed(); }));
+
+        body.Children.Add(Section("GÖRÜNÜRLÜK"));
+        body.Children.Add(Segmented(new[] { "always", "hover" }, new[] { "Her zaman", "Üzerine gelince" }, prefs.Reveal, value => { prefs.Reveal = value; Changed(); }));
+        body.Children.Add(Toggle("Tam ekran uygulamada gizlen", prefs.FoldFullscreen, value => { prefs.FoldFullscreen = value; SavePrefs(); CheckFullscreen(); }));
+
+        body.Children.Add(Section("BİLDİRİMLER"));
+        body.Children.Add(Toggle("Oturum bitince / onay beklerken çentiği aç", prefs.NotifyPeek, value => { prefs.NotifyPeek = value; SavePrefs(); }));
+        body.Children.Add(Toggle("Ses çal", prefs.NotifySound, value => { prefs.NotifySound = value; SavePrefs(); }));
+
+        body.Children.Add(Section("SAĞLAYICILAR"));
+        body.Children.Add(Toggle(Glyphs["claude"] + "  Claude", prefs.Claude, value => { prefs.Claude = value; ProviderChanged(); }));
+        body.Children.Add(Toggle(Glyphs["codex"] + "  Codex", prefs.Codex, value => { prefs.Codex = value; ProviderChanged(); }));
+        body.Children.Add(Hint("Kapatılan sağlayıcı sorgulanmaz, oturumları taranmaz ve kayıtlı ölçümleri silinir."));
+
+        body.Children.Add(new Border { Height = 1, Background = theme.LineBrush(), Margin = new Thickness(0, 14, 0, 12) });
+        var footer = new DockPanel { LastChildFill = false };
+        var help = PillButton("Kullanım kılavuzu", OpenHelp);
+        help.Margin = new Thickness(0);
+        footer.Children.Add(help);
+        var refresh = PillButton("Şimdi yenile", delegate { Refresh(true); });
+        refresh.Margin = new Thickness(8, 0, 0, 0);
+        footer.Children.Add(refresh);
+        var done = PillButton("Kapat", delegate { if (settingsWindow != null) settingsWindow.Close(); });
+        done.Margin = new Thickness(0);
+        DockPanel.SetDock(done, Dock.Right);
+        footer.Children.Add(done);
+        body.Children.Add(footer);
+
+        var layout = new DockPanel();
+        DockPanel.SetDock(header, Dock.Top);
+        layout.Children.Add(header);
+        layout.Children.Add(body);
+
+        // Ayarlar okunabilir kalsın diye her yüzeyde opak arka plan kullanılır.
+        return new Border
+        {
+            Margin = new Thickness(14), CornerRadius = new CornerRadius(18), Background = Ui.B(theme.Surface),
+            BorderBrush = Ui.B(theme.Line), BorderThickness = new Thickness(1), Child = layout, Effect = Shadow(theme.Light ? 0.18 : 0.45)
+        };
+    }
+
+    // Sağlayıcı aç/kapa: arayüzü yeniden kur, oturum listesini süz, toplayıcıyı yeni tercihle çalıştır
+    private void ProviderChanged()
+    {
+        sessions = sessions.Where(s => s.Provider == "claude" ? prefs.Claude : prefs.Codex).ToList();
+        lastStates = null;
+        Changed();
+        Window.Dispatcher.BeginInvoke(new Action(() => { Refresh(false); ScanSessions(); }));
+    }
+
+    private FrameworkElement Section(string text)
+    {
+        var label = Ui.T(text, 10.5, theme.Faint, FontWeights.SemiBold);
+        label.Margin = new Thickness(0, 14, 0, 7);
+        return label;
+    }
+
+    private FrameworkElement Hint(string text)
+    {
+        return new TextBlock { Text = text, FontSize = 11, Foreground = Ui.B(theme.Faint), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(2, 6, 0, 0) };
+    }
+
+    // Parçalı seçici (segmented control): seçili parça vurgu renginde
+    private FrameworkElement Segmented(string[] values, string[] labels, string current, Action<string> pick)
+    {
+        var grid = new UniformGrid { Rows = 1, Columns = values.Length };
+        for (int i = 0; i < values.Length; i++)
+        {
+            string value = values[i];
+            bool selected = value == current;
+            var label = Ui.T(labels[i], 12, selected ? theme.OnAccent : theme.Sub, selected ? FontWeights.SemiBold : FontWeights.Normal);
+            label.HorizontalAlignment = HorizontalAlignment.Center;
+            label.TextTrimming = TextTrimming.CharacterEllipsis;
+            var part = new Border
+            {
+                CornerRadius = new CornerRadius(8), Padding = new Thickness(6, 6, 6, 7), Margin = new Thickness(2),
+                Background = selected ? (Brush)Ui.B(theme.Accent) : Ui.Hit, Cursor = selected ? Cursors.Arrow : Cursors.Hand, Child = label
+            };
+            if (!selected)
+            {
+                part.MouseEnter += delegate { part.Background = Ui.B(Ui.Alpha(theme.Text, 0x12)); label.Foreground = Ui.B(theme.Text); };
+                part.MouseLeave += delegate { part.Background = Ui.Hit; label.Foreground = Ui.B(theme.Sub); };
+                part.MouseLeftButtonUp += (s, e) => { e.Handled = true; pick(value); };
+            }
+            grid.Children.Add(part);
+        }
+        return new Border { CornerRadius = new CornerRadius(10), Background = Ui.B(theme.Raised), Padding = new Thickness(1), Child = grid };
+    }
+
+    // Anahtar (toggle switch); tıklamada görünümü anında değiştirir, sonra geri çağırır
+    private FrameworkElement Toggle(string text, bool initial, Action<bool> changed)
+    {
+        bool state = initial;
+        var row = new DockPanel { Background = Ui.Hit, Cursor = Cursors.Hand, Margin = new Thickness(0, 4, 0, 4) };
+        var track = new Border { Width = 36, Height = 20, CornerRadius = new CornerRadius(10), VerticalAlignment = VerticalAlignment.Center };
+        var knob = new Shapes.Ellipse { Width = 14, Height = 14, Margin = new Thickness(3, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center };
+        track.Child = knob;
+        Action paint = () =>
+        {
+            track.Background = Ui.B(state ? theme.Accent : theme.Track);
+            knob.Fill = Ui.B(state ? theme.OnAccent : (theme.Light ? Colors.White : theme.Sub));
+            knob.HorizontalAlignment = state ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        };
+        paint();
+        DockPanel.SetDock(track, Dock.Right);
+        row.Children.Add(track);
+        var label = Ui.T(text, 12.5, theme.Text, FontWeights.Normal);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        label.TextWrapping = TextWrapping.Wrap;
+        label.Margin = new Thickness(0, 0, 12, 0);
+        row.Children.Add(label);
+        row.MouseLeftButtonUp += (s, e) =>
+        {
+            e.Handled = true;
+            state = !state;
+            paint();
+            changed(state);
+        };
+        return row;
+    }
+}

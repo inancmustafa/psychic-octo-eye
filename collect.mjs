@@ -4,7 +4,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { normalizeCodex, normalizeClaude, providerResult, providerFailure } from './providers.mjs';
+import { normalizeCodex, normalizeClaude, providerResult, providerFailure, enabledProviders } from './providers.mjs';
 
 const base = path.dirname(fileURLToPath(import.meta.url));
 const stateDir = process.env.USAGE_WIDGET_STATE_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), 'UsageWidget');
@@ -13,6 +13,7 @@ const statePath = path.join(stateDir, 'usage.json');
 const configPath = path.join(base, 'runtime.json');
 const config = readJson(configPath, {});
 const previous = readJson(statePath, {});
+const enabled = enabledProviders(readJson(path.join(stateDir, 'preferences.json'), {}));
 const force = process.argv.includes('--force');
 function readJson(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')); } catch { return fallback; } }
 function failure(kind, retryMs) { return Object.assign(new Error(kind), { kind, retryMs }); }
@@ -86,7 +87,8 @@ try {
 } catch { process.exit(0); }
 try {
   const result = { schema: 1, writtenAt: Date.now() };
-  const tasks = [['codex', 'Codex', codexUsage], ['claude', 'Claude', claudeUsage]];
+  // Kapatılan sağlayıcı listeden çıkar; anahtarı yazılmadığı için eski ölçümü de silinir.
+  const tasks = [['codex', 'Codex', codexUsage], ['claude', 'Claude', claudeUsage]].filter(([id]) => enabled.includes(id));
   const settled = await Promise.allSettled(tasks.map(async ([id, name, fetcher]) => {
     const old = previous[id];
     const retryBlocked = old?.error === 'rate_limited' && Date.now() < old.nextAttemptAt;
@@ -102,7 +104,7 @@ try {
   const temporary = `${statePath}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(result, null, 2), { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(temporary, statePath);
-  if (process.argv.includes('--summary')) console.log(JSON.stringify({ codex: result.codex.status, claude: result.claude.status }));
+  if (process.argv.includes('--summary')) console.log(JSON.stringify(Object.fromEntries(tasks.map(([id]) => [id, result[id].status]))));
 } finally {
   if (lock !== undefined) fs.closeSync(lock);
   try { fs.unlinkSync(lockPath); } catch {}
