@@ -1,0 +1,23 @@
+# Machine-specific configuration, shortcuts and generated builds
+runtime.json
+*.lnk
+*.exe
+*.pdb
+preview.png
+dist/
+bin/
+obj/
+
+# Local state and credentials must never be published
+.env
+.env.*
+!.env.example
+.credentials.json
+auth.json
+usage.json
+preferences.json
+*.log
+*.lock
+*.tmp
+.claude/
+.codex/

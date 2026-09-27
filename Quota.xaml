@@ -1,0 +1,7 @@
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Margin="0,0,0,9">
+ <DockPanel><TextBlock x:Name="Label" FontSize="11" Foreground="#C6CFDC"/><TextBlock x:Name="Percent" FontSize="11" FontWeight="SemiBold" Foreground="#F3F5F9" HorizontalAlignment="Right"/></DockPanel>
+ <ProgressBar x:Name="Bar" Height="3" Margin="0,6,0,5" Minimum="0" Maximum="100" BorderThickness="0" Background="#303947">
+  <ProgressBar.Template><ControlTemplate TargetType="ProgressBar"><Grid Background="{TemplateBinding Background}"><Border x:Name="PART_Track"/><Border x:Name="PART_Indicator" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}" CornerRadius="1.5"/></Grid></ControlTemplate></ProgressBar.Template>
+ </ProgressBar>
+ <TextBlock x:Name="Reset" FontSize="10" Foreground="#95A2B6"/>
+</StackPanel>
