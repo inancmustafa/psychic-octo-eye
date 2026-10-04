@@ -19,15 +19,13 @@ internal sealed partial class Widget
     private void BuildUi()
     {
         theme = Theme.Create(prefs);
-        rings.Clear(); minis.Clear(); miniTexts.Clear(); slots.Clear();
-        string[] ids = EnabledIds();
         bool vertical = Vertical;
 
         notch = new Border { ClipToBounds = true, SnapsToDevicePixels = true };
         var layers = new Grid();
         sliverView = BuildSliver(vertical);
-        idleView = BuildIdle(ids, vertical);
-        expandedView = BuildExpanded(ids, vertical);
+        idleView = BuildIdle(vertical);
+        expandedView = BuildExpanded(vertical);
         layers.Children.Add(sliverView);
         layers.Children.Add(idleView);
         layers.Children.Add(expandedView);
@@ -71,14 +69,13 @@ internal sealed partial class Widget
         Window.Content = root;
 
         ApplyNotch(false);
-        if (cardProvider != null && rings.ContainsKey(cardProvider))
+        if (cardOpen)
         {
-            card.Child = BuildCard(cardProvider);
+            card.Child = BuildCard();
             card.Visibility = Visibility.Visible;
             cardVersion = version;
             cardBuilt = DateTime.UtcNow;
         }
-        else cardProvider = null;
         Render();
     }
 
@@ -139,98 +136,100 @@ internal sealed partial class Widget
         return strip;
     }
 
-    // Dinlenme hâli: sağlayıcı başına küçük halka + yüzde
-    private FrameworkElement BuildIdle(string[] ids, bool vertical)
+    // Dinlenme hâli: küçük iç içe halka + yüzde (kota doluysa açılmaya kalan süre)
+    private FrameworkElement BuildIdle(bool vertical)
     {
         var panel = new StackPanel
         {
             Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false,
+            Margin = vertical ? new Thickness(0, 5, 0, 5) : new Thickness(7, 0, 7, 0)
         };
-        if (ids.Length == 0) { panel.Children.Add(Ui.T("—", 12, theme.Sub, FontWeights.SemiBold)); return panel; }
-        foreach (string id in ids)
-        {
-            var mini = new RingView(vertical ? 16 : 14, 2.6, 0, false, theme);
-            var text = Ui.T("—", vertical ? 10 : 11.5, theme.Text, FontWeights.SemiBold);
-            var slot = new StackPanel { Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal, Margin = vertical ? new Thickness(0, 5, 0, 5) : new Thickness(7, 0, 7, 0) };
-            mini.Root.HorizontalAlignment = HorizontalAlignment.Center;
-            mini.Root.VerticalAlignment = VerticalAlignment.Center;
-            text.HorizontalAlignment = HorizontalAlignment.Center;
-            text.VerticalAlignment = VerticalAlignment.Center;
-            text.Margin = vertical ? new Thickness(0, 3, 0, 0) : new Thickness(6, 0, 0, 0);
-            slot.Children.Add(mini.Root);
-            slot.Children.Add(text);
-            panel.Children.Add(slot);
-            minis[id] = mini;
-            miniTexts[id] = text;
-        }
+        mini = new RingView(18, 2.2, 0, false, theme, 2.2);
+        miniText = Ui.T("—", vertical ? 10 : 11.5, theme.Text, FontWeights.SemiBold);
+        mini.Root.HorizontalAlignment = HorizontalAlignment.Center;
+        mini.Root.VerticalAlignment = VerticalAlignment.Center;
+        miniText.HorizontalAlignment = HorizontalAlignment.Center;
+        miniText.VerticalAlignment = VerticalAlignment.Center;
+        miniText.Margin = vertical ? new Thickness(0, 3, 0, 0) : new Thickness(6, 0, 0, 0);
+        panel.Children.Add(mini.Root);
+        panel.Children.Add(miniText);
         return panel;
     }
 
-    // Açık hâl: büyük halkalar + palet düğmesi
-    private FrameworkElement BuildExpanded(string[] ids, bool vertical)
+    // Açık hâl: büyük halka + yanında ton rafı (◐) ve yenile (↻) düğmeleri
+    private FrameworkElement BuildExpanded(bool vertical)
     {
         var panel = new StackPanel
         {
             Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
         };
-        foreach (string id in ids) panel.Children.Add(RingSlot(id));
-        if (ids.Length == 0)
+        panel.Children.Add(RingSlot());
+        // Yatay çentikte alt alta, dikey çentikte yan yana
+        var tools = new StackPanel
         {
-            var off = Ui.T("Sağlayıcı yok", 10.5, theme.Sub, FontWeights.Normal);
-            off.VerticalAlignment = VerticalAlignment.Center;
-            off.Margin = new Thickness(6);
-            panel.Children.Add(off);
-        }
-        var palette = new Border
-        {
-            Width = 30, Height = 30, CornerRadius = new CornerRadius(15), Background = Ui.B(theme.Raised), Cursor = Cursors.Hand,
-            Margin = vertical ? new Thickness(0, 4, 0, 0) : new Thickness(4, 0, 0, 0), ToolTip = "Ton, yenileme ve ayarlar",
+            Orientation = vertical ? Orientation.Horizontal : Orientation.Vertical,
+            Margin = vertical ? new Thickness(0, 4, 0, 0) : new Thickness(4, 0, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
         };
-        palette.Child = new TextBlock
+        tools.Children.Add(RoundButton("◐", "Ton, yenileme ve ayarlar", delegate { shelfOpen = !shelfOpen; UpdateShelf(); }));
+        var refresh = RoundButton("↻", "Şimdi yenile", delegate { Refresh(true); });
+        refresh.Margin = vertical ? new Thickness(4, 0, 0, 0) : new Thickness(0, 4, 0, 0);
+        refreshGlyph = (TextBlock)refresh.Child;
+        tools.Children.Add(refresh);
+        panel.Children.Add(tools);
+        return panel;
+    }
+
+    // Çentikteki yuvarlak düğme
+    private Border RoundButton(string glyph, string tip, Action action)
+    {
+        var button = new Border
         {
-            Text = "◐", FontSize = 14, Foreground = Ui.B(theme.Sub), FontFamily = new FontFamily("Segoe UI Symbol"),
+            Width = 30, Height = 30, CornerRadius = new CornerRadius(15), Background = Ui.B(theme.Raised), Cursor = Cursors.Hand, ToolTip = tip,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+        };
+        button.Child = new TextBlock
+        {
+            Text = glyph, FontSize = 14, Foreground = Ui.B(theme.Sub), FontFamily = new FontFamily("Segoe UI Symbol"),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, -1, 0, 0)
         };
-        palette.MouseEnter += delegate { palette.Background = Ui.B(Ui.Mix(theme.Raised, theme.Text, 0.12)); };
-        palette.MouseLeave += delegate { palette.Background = Ui.B(theme.Raised); };
-        palette.MouseLeftButtonUp += (s, e) =>
+        button.MouseEnter += delegate { button.Background = Ui.B(Ui.Mix(theme.Raised, theme.Text, 0.12)); };
+        button.MouseLeave += delegate { button.Background = Ui.B(theme.Raised); };
+        button.MouseLeftButtonUp += (s, e) =>
         {
             e.Handled = true;
             if (dragging) return;
-            shelfOpen = !shelfOpen;
-            UpdateShelf();
+            action();
         };
-        panel.Children.Add(palette);
-        return panel;
+        return button;
     }
 
-    private FrameworkElement RingSlot(string id)
+    // Dış halka haftalık, iç halka 5 saatlik kota; altında "Claude" ya da kota doluysa açılmaya kalan süre
+    private FrameworkElement RingSlot()
     {
-        var ring = new RingView(44, 4.2, 13, true, theme);
-        var label = Ui.T(Names[id], 10.5, theme.Sub, FontWeights.Normal);
+        var ring = new RingView(48, 3.6, 13, true, theme, 3.6);
+        var label = Ui.T("Claude", 10.5, theme.Sub, FontWeights.Normal);
         label.HorizontalAlignment = HorizontalAlignment.Center;
         label.Margin = new Thickness(0, 5, 0, 0);
+        ringLabel = label;
         ring.Root.HorizontalAlignment = HorizontalAlignment.Center;
         var inner = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         inner.Children.Add(ring.Root);
         inner.Children.Add(label);
         var slot = new Border { Width = 70, Height = 72, CornerRadius = new CornerRadius(16), Background = Ui.Hit, Cursor = Cursors.Hand, Child = inner };
-        // Halkanın üzerinde kısa süre durunca kartı aç; kart zaten açıksa hemen geçiş yap
+        // Halkanın üzerinde kısa süre durunca kartı aç
         slot.MouseEnter += delegate
         {
             slot.Background = Ui.B(Ui.Alpha(theme.Text, 0x12));
             cardTimer.Stop();
-            if (card.Visibility == Visibility.Visible) ShowCard(id);
-            else { pendingCard = id; hoverTimer.Stop(); hoverTimer.Start(); }
+            if (card.Visibility != Visibility.Visible) { hoverTimer.Stop(); hoverTimer.Start(); }
         };
         slot.MouseLeave += delegate
         {
             slot.Background = Ui.Hit;
             hoverTimer.Stop();
-            pendingCard = null;
             cardTimer.Start();
         };
         // Tıklama kartı sabitler; tekrar tıklama sabitlemeyi kaldırır
@@ -239,11 +238,11 @@ internal sealed partial class Widget
             e.Handled = true;
             if (dragging) return;
             hoverTimer.Stop();
-            cardPinned = !(cardPinned && cardProvider == id);
-            ShowCard(id);
+            cardPinned = !cardPinned;
+            ShowCard();
         };
-        rings[id] = ring;
-        slots[id] = slot;
+        this.ring = ring;
+        this.slot = slot;
         return slot;
     }
 
@@ -331,11 +330,10 @@ internal sealed partial class Widget
 
     private Size NotchTarget(bool sliver)
     {
-        int n = Math.Max(1, EnabledIds().Length);
         bool vertical = Vertical;
-        if (expanded) return vertical ? new Size(84, 68 + n * 72) : new Size(68 + n * 70, 84);
+        if (expanded) return vertical ? new Size(84, 140) : new Size(138, 84);
         if (sliver) return vertical ? new Size(14, 110) : new Size(110, 14);
-        return vertical ? new Size(40, 18 + n * 46) : new Size(22 + n * 64, 30);
+        return vertical ? new Size(40, 64) : new Size(86, 30);
     }
 
     private void ApplyNotch(bool animate)
@@ -395,12 +393,12 @@ internal sealed partial class Widget
         return prefs.Edge == "bottom" || prefs.Edge == "right" ? 8 : -8;
     }
 
-    private void ShowCard(string id)
+    private void ShowCard()
     {
-        if (card == null || !rings.ContainsKey(id)) return;
+        if (card == null) return;
         bool was = card.Visibility == Visibility.Visible;
-        cardProvider = id;
-        card.Child = BuildCard(id);
+        cardOpen = true;
+        card.Child = BuildCard();
         cardVersion = version;
         cardBuilt = DateTime.UtcNow;
         card.BorderBrush = cardPinned ? Ui.B(Ui.Alpha(theme.Accent, 0xA0)) : theme.LineBrush();
@@ -419,7 +417,7 @@ internal sealed partial class Widget
 
     private void HideCard()
     {
-        cardProvider = null;
+        cardOpen = false;
         cardPinned = false;
         hoverTimer.Stop();
         if (card != null) card.Visibility = Visibility.Collapsed;
@@ -458,41 +456,35 @@ internal sealed partial class Widget
     private void Render()
     {
         if (theme == null || notch == null) return;
-        foreach (string id in ProviderIds)
+        ProviderView view = Describe();
+        string value = ValueText(view);
+        bool full = view.ReopenAt.HasValue;
+        SessionState activity = Activity();
+        Color outer = RingColor(view, view.Weekly), inner = RingColor(view, view.Session);
+        foreach (RingView target in new[] { ring, mini })
         {
-            ProviderView view = Describe(id);
-            Color color = RingColor(view);
-            string value = ValueText(view);
-            double percent = view.Used.HasValue ? view.Used.Value : 0;
-            SessionState activity = Activity(id);
-            RingView ring;
-            if (rings.TryGetValue(id, out ring))
-            {
-                ring.Set(percent, color);
-                ring.Value.Text = value;
-                ring.Value.FontSize = value.Length >= 4 ? 11.5 : 13;
-                ring.Value.Foreground = Ui.B(view.Used.HasValue ? theme.Text : value == "!" ? theme.Warn : theme.Faint);
-                SetDot(ring, activity);
-            }
-            if (minis.TryGetValue(id, out ring))
-            {
-                ring.Set(percent, color);
-                SetDot(ring, activity);
-            }
-            TextBlock text;
-            if (miniTexts.TryGetValue(id, out text))
-            {
-                text.Text = value;
-                text.Foreground = Ui.B(view.Used.HasValue && view.Fresh ? theme.Text : value == "!" ? theme.Warn : theme.Sub);
-            }
+            target.Set(view.Weekly ?? 0, outer);
+            target.SetInner(view.Session ?? 0, inner);
+            SetDot(target, activity);
         }
-        if (cardProvider != null && card != null && card.Visibility == Visibility.Visible
+        ring.Value.Text = value;
+        ring.Value.FontSize = value.Length >= 4 ? 11 : 13;
+        ring.Value.Foreground = Ui.B(view.Used.HasValue ? theme.Text : value == "!" ? theme.Warn : theme.Faint);
+        // Kota doluysa açılmaya kalan süre: açık çentikte halkanın altında saniyeli, kapalı çentikte yüzdenin yerinde
+        Color alert = view.Fresh ? theme.Crit : theme.Sub;
+        ringLabel.Text = full ? Remaining(view.ReopenAt.Value, false) : "Claude";
+        ringLabel.Foreground = Ui.B(full ? alert : theme.Sub);
+        miniText.Text = full ? Remaining(view.ReopenAt.Value, true) : value;
+        if (Vertical) miniText.FontSize = miniText.Text.Length >= 7 ? 9 : 10;  // dikey çentik 40 px genişliğinde
+        miniText.Foreground = Ui.B(full ? alert : view.Used.HasValue && view.Fresh ? theme.Text : value == "!" ? theme.Warn : theme.Sub);
+        if (cardOpen && card != null && card.Visibility == Visibility.Visible
             && (cardVersion != version || (DateTime.UtcNow - cardBuilt).TotalSeconds > 20))
         {
-            card.Child = BuildCard(cardProvider);
+            card.Child = BuildCard();
             cardVersion = version;
             cardBuilt = DateTime.UtcNow;
         }
+        refreshGlyph.Text = collecting ? "…" : "↻";
         UpdateTrayText();
     }
 
@@ -520,22 +512,20 @@ internal sealed partial class Widget
 
     // ───────────────────────── Kart ─────────────────────────
 
-    private FrameworkElement BuildCard(string id)
+    private FrameworkElement BuildCard()
     {
-        ProviderView view = Describe(id);
+        ProviderView view = Describe();
         var panel = new StackPanel();
+        countdowns.Clear();
 
         var header = new DockPanel();
-        var open = IconButton("↗", 13, "Sağlayıcının kullanım sayfasını aç", delegate { OpenUrl(UsagePages[id]); });
-        DockPanel.SetDock(open, Dock.Right);
-        header.Children.Add(open);
         var title = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        var glyph = Ui.T(Glyphs[id], 14, id == "claude" ? (theme.Light ? Ui.Hex("#B4552F") : Ui.Hex("#E0896A")) : theme.Text, FontWeights.Normal);
+        var glyph = Ui.T(Glyph, 14, theme.Light ? Ui.Hex("#B4552F") : Ui.Hex("#E0896A"), FontWeights.Normal);
         glyph.FontFamily = new FontFamily("Segoe UI Symbol");
         glyph.VerticalAlignment = VerticalAlignment.Center;
         glyph.Margin = new Thickness(0, 0, 8, 0);
         title.Children.Add(glyph);
-        var name = Ui.T(Names[id], 15.5, theme.Text, FontWeights.SemiBold);
+        var name = Ui.T("Claude", 15.5, theme.Text, FontWeights.SemiBold);
         name.VerticalAlignment = VerticalAlignment.Center;
         title.Children.Add(name);
         if (cardPinned)
@@ -549,45 +539,38 @@ internal sealed partial class Widget
         panel.Children.Add(header);
 
         bool problem = view.Status == "login_required" || view.Status == "forbidden" || view.Status == "no_quota";
-        var status = Ui.T(StatusLine(id, view), 11, problem ? theme.Warn : theme.Sub, FontWeights.Normal);
+        var status = Ui.T(StatusLine(view), 11, problem ? theme.Warn : theme.Sub, FontWeights.Normal);
         status.TextWrapping = TextWrapping.Wrap;
         status.Margin = new Thickness(0, 2, 0, 12);
         panel.Children.Add(status);
 
         if (view.Windows.Length > 0)
         {
-            foreach (var quota in view.Windows) panel.Children.Add(QuotaRow(quota, view.Fresh));
+            foreach (var quota in view.Windows) panel.Children.Add(QuotaRow(quota, view.Fresh, RingRole(view, quota)));
         }
         else
         {
-            var message = Ui.T(ProblemText(id, view), 11.5, theme.Sub, FontWeights.Normal);
+            var message = Ui.T(ProblemText(view), 11.5, theme.Sub, FontWeights.Normal);
             message.TextWrapping = TextWrapping.Wrap;
             message.Margin = new Thickness(0, 0, 0, 10);
             panel.Children.Add(message);
             if (view.Status == "login_required" || view.Status == "forbidden")
-                panel.Children.Add(PillButton(id == "claude" ? "Claude’u bağla ↗" : "Codex’i bağla ↗", delegate { Connect(id); }));
+                panel.Children.Add(PillButton("Claude’u bağla ↗", Connect));
         }
 
         panel.Children.Add(Divider());
-        panel.Children.Add(SessionsBlock(id));
+        panel.Children.Add(SessionsBlock());
         panel.Children.Add(Divider());
 
-        var footer = new DockPanel();
-        bool busy = collector != null && !collector.HasExited;
-        var refresh = IconButton(busy ? "…" : "↻  Yenile", 11, "Şimdi yenile", delegate { Refresh(true); });
-        DockPanel.SetDock(refresh, Dock.Right);
-        footer.Children.Add(refresh);
         var foot = Ui.T(note, 10, theme.Faint, FontWeights.Normal);
         foot.TextWrapping = TextWrapping.Wrap;
-        foot.VerticalAlignment = VerticalAlignment.Center;
-        footer.Children.Add(foot);
-        panel.Children.Add(footer);
+        panel.Children.Add(foot);
         return panel;
     }
 
-    private string StatusLine(string id, ProviderView view)
+    private string StatusLine(ProviderView view)
     {
-        string source = id == "claude" ? "Claude Code oturumu" : "Codex CLI oturumu";
+        const string source = "Claude Code oturumu";
         if (demo) return "Örnek değerler · hesap okunmuyor";
         if (!view.HasData) return source + " · bağlanıyor…";
         if (view.Status == "login_required") return source + " · giriş gerekli";
@@ -597,12 +580,11 @@ internal sealed partial class Widget
         return source + " · " + (view.Fresh ? "güncel" : "eski veri") + " · " + Ago(view.Age);
     }
 
-    private static string ProblemText(string id, ProviderView view)
+    private static string ProblemText(ProviderView view)
     {
         switch (view.Status)
         {
-            case "login_required":
-                return id == "claude" ? "Masaüstünde kullandığın Claude hesabıyla Claude Code’a bir kez giriş yap." : "Kullanım kotasını görmek için Codex hesabına giriş yap.";
+            case "login_required": return "Masaüstünde kullandığın Claude hesabıyla Claude Code’a bir kez giriş yap.";
             case "forbidden": return "Bu oturumun kota okuma izni yok. Abonelik hesabınla yeniden bağlan.";
             case "no_quota": return "Bu hesap için kullanım kotası dönmedi.";
             case "": return "Kullanım bilgisi alınıyor…";
@@ -610,25 +592,84 @@ internal sealed partial class Widget
         }
     }
 
-    private FrameworkElement QuotaRow(Dictionary<string, object> quota, bool fresh)
+    // Kartta pencerenin çentikteki yeri: 5 saatlik iç halka, en dolu haftalık dış halka
+    private static string RingRole(ProviderView view, Dictionary<string, object> quota)
+    {
+        string id = Text(quota, "id");
+        return id == "five_hour" ? "iç halka" : id == view.WeeklyId ? "dış halka" : null;
+    }
+
+    private FrameworkElement QuotaRow(Dictionary<string, object> quota, bool fresh, string role)
     {
         bool expired = Expired(quota);
         double used = Number(quota, "usedPercent") ?? 0;
         Color color = !fresh || expired ? theme.Stale : theme.UsageColor(used);
         var row = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
         var top = new DockPanel();
-        var percent = Ui.T(expired ? "—" : "%" + Math.Round(used).ToString(Inv), 12.5, theme.Text, FontWeights.SemiBold);
+        var percent = Ui.T(expired ? "—" : PercentText(used), 12.5, theme.Text, FontWeights.SemiBold);
         DockPanel.SetDock(percent, Dock.Right);
         top.Children.Add(percent);
-        top.Children.Add(Ui.T(Text(quota, "label"), 11.5, theme.Sub, FontWeights.Normal));
+        var label = Ui.T(Text(quota, "label"), 11.5, theme.Sub, FontWeights.Normal);
+        if (role != null) label.Inlines.Add(new System.Windows.Documents.Run(" · " + role) { Foreground = Ui.B(theme.Faint) });
+        top.Children.Add(label);
         row.Children.Add(top);
         var bar = Bar(expired ? 0 : used, color);
         bar.Margin = new Thickness(0, 6, 0, 0);
         row.Children.Add(bar);
-        var reset = Ui.T(ResetText(quota), 10.5, theme.Faint, FontWeights.Normal);
-        reset.Margin = new Thickness(0, 5, 0, 0);
-        row.Children.Add(reset);
+        double? reset = Number(quota, "resetsAt");
+        var when = new DockPanel { Margin = new Thickness(0, 5, 0, 0) };
+        if (reset.HasValue)
+        {
+            // Solda geri sayım, sağda hedef an; ikisi de saniye hassasiyetinde ve kart açıkken sürekli güncellenir
+            var countdown = new Countdown
+            {
+                Left = Ui.T("", 10.5, theme.Faint, FontWeights.Normal), Target = Ui.T("", 10.5, theme.Faint, FontWeights.Normal), ResetMs = reset.Value
+            };
+            countdown.Target.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(countdown.Target, Dock.Right);
+            when.Children.Add(countdown.Target);
+            when.Children.Add(countdown.Left);
+            SetCountdown(countdown);
+            countdowns.Add(countdown);
+        }
+        else when.Children.Add(Ui.T("Yenilenme zamanı bilinmiyor", 10.5, theme.Faint, FontWeights.Normal));
+        row.Children.Add(when);
         return row;
+    }
+
+    private sealed class Countdown
+    {
+        public TextBlock Left, Target;
+        public double ResetMs;
+    }
+
+    private void UpdateCountdowns()
+    {
+        // Kota doluyken çentikteki süre de akar; süre bitince sıradaki 5 dk'lık kontrol beklenmeden ölçüm alınır
+        if (Describe().ReopenAt.HasValue) { reopenPending = true; Render(); }
+        else if (reopenPending) { reopenPending = false; Render(); Refresh(true); }
+        if (card == null || card.Visibility != Visibility.Visible) return;
+        foreach (var countdown in countdowns) SetCountdown(countdown);
+    }
+
+    // "Yenilenmeye 2:36:12" / "Yenilenmeye 3 gün 10:05:12" ve "bugün 23:59:59" / "yarın 07:59:59" / "Cum 02.10 07:59:59"
+    private static void SetCountdown(Countdown countdown)
+    {
+        // Yukarı yuvarlanır: sayaç hedef saniyede 0'a iner
+        double seconds = Math.Ceiling((countdown.ResetMs - Now) / 1000);
+        if (seconds <= 0)
+        {
+            countdown.Left.Text = "Süre doldu · yeni ölçüm bekleniyor";
+            countdown.Target.Text = "";
+            return;
+        }
+        var span = TimeSpan.FromSeconds(seconds);
+        countdown.Left.Text = "Yenilenmeye " + (span.Days > 0 ? span.Days.ToString(Inv) + " gün " : "")
+            + String.Format(Inv, "{0}:{1:00}:{2:00}", span.Hours, span.Minutes, span.Seconds);
+        DateTime local = Epoch.AddMilliseconds(countdown.ResetMs).ToLocalTime();
+        DateTime today = DateTime.Now.Date;
+        string day = local.Date == today ? "bugün" : local.Date == today.AddDays(1) ? "yarın" : local.ToString("ddd dd.MM", Tr);
+        countdown.Target.Text = day + " " + local.ToString("HH:mm:ss", Tr);
     }
 
     private FrameworkElement Bar(double percent, Color color)
@@ -648,23 +689,23 @@ internal sealed partial class Widget
         return grid;
     }
 
-    private FrameworkElement SessionsBlock(string id)
+    private FrameworkElement SessionsBlock()
     {
-        var all = sessions.Where(s => s.Provider == id).ToList();
         var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 2) };
         var head = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-        var count = Ui.T(all.Count == 0 ? "" : all.Count.ToString(Inv), 10, theme.Faint, FontWeights.SemiBold);
+        var count = Ui.T(sessions.Count == 0 ? "" : sessions.Count.ToString(Inv), 10, theme.Faint, FontWeights.SemiBold);
         DockPanel.SetDock(count, Dock.Right);
         head.Children.Add(count);
         head.Children.Add(Ui.T("AJAN OTURUMLARI", 9.5, theme.Faint, FontWeights.SemiBold));
         panel.Children.Add(head);
-        if (all.Count == 0)
+        if (sessions.Count == 0)
         {
             panel.Children.Add(Ui.T("Son 3 saatte etkinlik yok.", 11, theme.Faint, FontWeights.Normal));
             return panel;
         }
-        foreach (var session in all.Take(4))
+        foreach (var session in sessions.Take(4))
         {
+            var target = session;
             var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(15) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -674,9 +715,9 @@ internal sealed partial class Widget
             var dot = new Shapes.Ellipse { Width = 7, Height = 7, Fill = Ui.B(color), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
             if (session.State == SessionState.Working && !noAnim) dot.BeginAnimation(UIElement.OpacityProperty, Pulse());
             row.Children.Add(dot);
-            var name = Ui.T(session.Project, 11.5, theme.Text, FontWeights.Normal);
+            // Masaüstündeki oturum başlığı; başlıksız (terminal) oturumlarda proje klasörü
+            var name = Ui.T(session.Title ?? session.Project, 11.5, theme.Text, FontWeights.Normal);
             name.TextTrimming = TextTrimming.CharacterEllipsis;
-            name.ToolTip = session.Project;
             Grid.SetColumn(name, 1);
             row.Children.Add(name);
             var state = Ui.T(StateText(session.State), 11, color, session.State == SessionState.Finished ? FontWeights.Normal : FontWeights.SemiBold);
@@ -688,9 +729,19 @@ internal sealed partial class Widget
             age.VerticalAlignment = VerticalAlignment.Center;
             Grid.SetColumn(age, 3);
             row.Children.Add(age);
-            panel.Children.Add(row);
+            // Satıra tıklamak Claude masaüstünde bu oturumu açar; vurgu yazıların hizasını bozmadan kenarlara taşar
+            var item = new Border
+            {
+                Child = row, Background = Ui.Hit, CornerRadius = new CornerRadius(6), Cursor = Cursors.Hand,
+                Padding = new Thickness(4, 0, 4, 0), Margin = new Thickness(-4, 0, -4, 0),
+                ToolTip = (session.Title != null ? session.Title + "\n" + session.Project : session.Project) + "\nTıkla: Claude masaüstünde aç"
+            };
+            item.MouseEnter += delegate { item.Background = Ui.B(Ui.Alpha(theme.Text, 0x12)); };
+            item.MouseLeave += delegate { item.Background = Ui.Hit; };
+            item.MouseLeftButtonUp += (s, e) => { e.Handled = true; if (!dragging) OpenSession(target); };
+            panel.Children.Add(item);
         }
-        if (all.Count > 4) panel.Children.Add(Ui.T("+" + (all.Count - 4).ToString(Inv) + " oturum daha", 10.5, theme.Faint, FontWeights.Normal));
+        if (sessions.Count > 4) panel.Children.Add(Ui.T("+" + (sessions.Count - 4).ToString(Inv) + " oturum daha", 10.5, theme.Faint, FontWeights.Normal));
         return panel;
     }
 
@@ -714,19 +765,4 @@ internal sealed partial class Widget
         return Math.Floor(seconds.Value / 3600).ToString(Inv) + " sa önce";
     }
 
-    private static string ResetText(Dictionary<string, object> quota)
-    {
-        double? reset = Number(quota, "resetsAt");
-        if (!reset.HasValue) return "Yenilenme zamanı bilinmiyor";
-        double seconds = (reset.Value - Now) / 1000;
-        if (seconds <= 0) return "Süre doldu · yeni ölçüm bekleniyor";
-        var span = TimeSpan.FromSeconds(seconds);
-        string relative;
-        if (span.TotalDays >= 1) relative = Math.Floor(span.TotalDays).ToString(Inv) + " gün " + span.Hours.ToString(Inv) + " sa sonra";
-        else if (span.TotalHours >= 1) relative = Math.Floor(span.TotalHours).ToString(Inv) + " sa " + span.Minutes.ToString(Inv) + " dk sonra";
-        else relative = span.TotalMinutes >= 1 ? Math.Ceiling(span.TotalMinutes).ToString(Inv) + " dk sonra" : "1 dk içinde";
-        DateTime local = Epoch.AddMilliseconds(reset.Value).ToLocalTime();
-        string clock = local.Date == DateTime.Now.Date ? local.ToString("HH:mm", Tr) : local.ToString("ddd HH:mm", Tr);
-        return "Yenilenme " + relative + " · " + clock;
-    }
 }

@@ -1,13 +1,16 @@
 <!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Usage Notch · Kullanım</title>
 <style>body{margin:60px auto;padding:0 24px;max-width:720px;background:#101410;color:#dfe5da;font:16px/1.7 'Segoe UI',sans-serif}h1{color:#fff;font-size:32px;margin-bottom:4px}h2{margin-top:34px;color:#9fd08a;font-size:19px;letter-spacing:.02em}a{color:#b7e0a5}code,kbd{background:#1f261e;padding:2px 6px;border-radius:5px;font-size:14px}.note{border-left:3px solid #f2b84b;padding:12px 20px;background:#171c16}li{margin:7px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}</style>
-<h1>Kullanımın, bir bakışta.</h1><p>Ekran kenarında duran küçük bir çentik: Claude ve Codex kotaları ile ajan oturumlarının durumu.</p>
+<h1>Kullanımın, bir bakışta.</h1><p>Ekran kenarında duran küçük bir çentik: Claude kotası ve ajan oturumlarının durumu.</p>
 
 <h2>Çentik</h2><ul>
-<li><b>Dinlenme:</b> Her sağlayıcı için küçük halka ve kullanılan yüzde (<code>%42</code>).</li>
-<li><b>Üzerine gel:</b> Çentik açılır, büyük halkalar görünür. Fareyi çekince katlanır.</li>
-<li><b>Halkanın üzerinde bekle:</b> Kart açılır — kota pencereleri, sıfırlanma zamanları, ajan oturumları.</li>
+<li><b>Dinlenme:</b> Küçük iç içe halka ve kullanılan yüzde (<code>%42</code>). <b>İç halka</b> 5 saatlik oturum, <b>dış halka</b> haftalık kota; yüzde ikisinden yüksek olanıdır.</li>
+<li><b>Kota dolunca:</b> Yüzdenin yerinde kullanımın açılmasına kalan süre görünür (<code>2:36:12</code>, bir günden uzunsa <code>3g 10sa</code>); açık çentikte halkanın altında saniyesiyle yazar. Süre bitince widget hemen yeni ölçüm alır.</li>
+<li><b>Üzerine gel:</b> Çentik açılır, büyük halka görünür. Fareyi çekince katlanır.</li>
+<li><b>Halkanın üzerinde bekle:</b> Kart açılır — kota pencereleri, yenilenme zamanları (saniyeli geri sayım ve hedef tarih/saat), ajan oturumları.</li>
+<li><b>Karttaki bir oturuma tıkla:</b> Claude masaüstünde o oturum açılır ve öne gelir.</li>
 <li><b>Halkaya tıkla:</b> Kart sabitlenir (<b>SABİT</b>). Tekrar tıkla ya da uzaklaş, çözülür.</li>
 <li><b>◐</b> ton rafını açar: üç ton, vurgu rengi, <b>↻</b> yenile, <b>⚙</b> ayarlar.</li>
+<li>Açık çentikte ◐'nin altındaki <b>↻</b> kotayı hemen yeniler; ölçüm sürerken <b>…</b> görünür.</li>
 <li><kbd>Alt</kbd> + sürükle: çentiği başka bir kenara veya monitöre taşı.</li>
 <li>Sistem tepsisindeki halka simgesi: sol tık çentiği gösterir; sağ tık menüsünde Ayarlar, Şimdi yenile ve Çıkış bulunur.</li></ul>
 
@@ -18,23 +21,22 @@
 <li><span class="dot" style="background:#6f776c"></span>Gri: eski veri, bağlantı yok veya kota süresi doldu</li></ul>
 <p>Halkanın köşesindeki nokta: vurgu ve nabız = ajan çalışıyor, sarı = seni bekliyor, gri = yakın zamanda bitti.</p>
 
-<h2>Ajan oturumları</h2><p>Claude Code ve Codex CLI'nin bu bilgisayardaki oturum kayıtları okunur; kartta proje klasörünün adı, durum ve süre görünür. Bir oturum bitince ya da onay beklemeye geçince çentik birkaç saniyeliğine kendiliğinden açılır (Ayarlar'dan kapatılabilir, istersen ses de çalar).</p>
+<h2>Ajan oturumları</h2><p>Claude Code'un bu bilgisayardaki oturum kayıtları okunur; kartta oturumun Claude masaüstündeki başlığı (terminalden açılan başlıksız oturumlarda proje klasörünün adı), durum ve süre görünür; adın üzerinde durunca tam başlık ve klasör çıkar. Bir oturum bitince ya da onay beklemeye geçince çentik birkaç saniyeliğine kendiliğinden açılır (Ayarlar'dan kapatılabilir, istersen ses de çalar).</p>
 <div class="note">Durum tahminidir: araç çağrısından sonra 30 saniye kayıt gelmezse “Seni bekliyor” yazar. Uzun süren bir derleme veya test de bu şekilde görünebilir. Konuşma içeriği okunmaz ya da saklanmaz.</div>
 
 <h2>Ayarlar</h2><ul>
 <li><b>Kenar:</b> Üst, Alt, Sol, Sağ.</li>
-<li><b>Yüzey:</b> Düz siyah, Koyu cam, Cam. (Windows'ta gerçek bulanıklık yok; cam görünümü yarı saydamlıkla verilir.)</li>
+<li><b>Yüzey:</b> Düz siyah, Koyu cam, Cam. (Windows'ta gerçek bulanıklık yok; cam görünümü yarı saydamlıkla verilir.) Cam seçiliyken <b>Cam saydamlığı</b> %10–%70 arasında ayarlanır; varsayılan %20.</li>
 <li><b>Ton:</b> Mürekkep, Grafit, Kağıt (açık renk palet).</li>
 <li><b>Vurgu rengi, Boyut</b> (Küçük/Orta/Büyük), <b>Görünürlük</b> (Her zaman / Üzerine gelince — kenarda ince görünmez şerit).</li>
-<li><b>Tam ekran uygulamada gizlen:</b> sunum, video vb. sırasında çentik kaybolur.</li>
-<li><b>Sağlayıcılar:</b> Kullanmadığın sağlayıcıyı kapat; sorgulanmaz ve ölçümü silinir.</li></ul>
+<li><b>Tam ekran uygulamada gizlen:</b> sunum, video vb. sırasında çentik kaybolur.</li></ul>
 
-<h2>Claude hesabını bağlama</h2><ol>
+<h2>Claude hesabını bağlama</h2><p>En kolayı: uygulama klasöründeki <code>Baslat.bat</code> dosyasına çift tıkla; giriş süresi dolmuşsa girişi açar, ardından widget'ı yeniden başlatır. Giriş yaklaşık 8 saat geçerlidir; süresi dolunca widget <code>Baslat.bat</code>'ı kendisi açar, tarayıcıda girişi tamamlaman yeterli (en çok saatte bir açılır). Elle bağlamak için:</p><ol>
 <li>Claude kartındaki <b>Claude’u bağla ↗</b> düğmesine bas.</li>
 <li>Açılan girişte Claude masaüstünde kullandığın <b>aynı hesabı</b> seç.</li>
-<li>Giriş bitince ton rafında veya kartta <b>↻</b> ile yenile. Son denemeden bu yana 1 dakika geçmediyse bir sonraki otomatik kontrolü bekle.</li></ol>
+<li>Giriş bitince açık çentikteki <b>↻</b> ile yenile. Son denemeden bu yana 1 dakika geçmediyse bir sonraki otomatik kontrolü bekle.</li></ol>
 
-<h2>Veriler</h2><p>Bilgiler 5 dakikada bir alınır. Codex resmî yerel App Server üzerinden, Claude mevcut Claude Code oturumuyla Anthropic'in kullanım adresinden okunur (herkese açık, garantili bir API sözleşmesi değildir). Şifre, API anahtarı veya konuşma içeriği saklanmaz; yerel önbellekte yalnızca yüzdeler, zamanlar ve bağlantı durumu tutulur.</p>
+<h2>Veriler</h2><p>Bilgiler 5 dakikada bir alınır. Kota, mevcut Claude Code oturumuyla Anthropic'in kullanım adresinden okunur (herkese açık, garantili bir API sözleşmesi değildir). Şifre, API anahtarı veya konuşma içeriği saklanmaz; yerel önbellekte yalnızca yüzdeler, zamanlar ve bağlantı durumu tutulur.</p>
 
-<h2>Kaldırma</h2><p>Tepsi menüsünden <b>Çıkış</b>. Uygulama klasörünü ve <code>%LOCALAPPDATA%\UsageWidget</code> klasörünü silmen yeterli; başlangıç kaydı eklenmez, Claude ve Codex ayarları değiştirilmez.</p>
-<p><a href="https://supernotchy.com/">Tasarım örneği: Super Notchy</a> · <a href="https://learn.chatgpt.com/docs/app-server">OpenAI App Server belgesi</a></p></html>
+<h2>Kaldırma</h2><p>Tepsi menüsünden <b>Çıkış</b>. Uygulama klasörünü ve <code>%LOCALAPPDATA%\UsageWidget</code> klasörünü silmen yeterli; başlangıç kaydı eklenmez, Claude ayarları değiştirilmez.</p>
+<p><a href="https://supernotchy.com/">Tasarım örneği: Super Notchy</a></p></html>

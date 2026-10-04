@@ -11,14 +11,15 @@ internal enum SessionState { None = 0, Finished = 1, Working = 2, Waiting = 3 }
 internal sealed class SessionInfo
 {
     public string Key;
-    public string Provider;
+    public string SessionId;             // Claude Code oturum kimliği (kayıt dosyasının adı)
     public string Project;
+    public string Title;                 // masaüstü uygulamasındaki oturum başlığı; yoksa null
     public SessionState State;
     public DateTime LastWriteUtc;
 }
 
-// Claude Code ve Codex CLI'nin yerel oturum kayıtlarını (JSONL) salt okunur tarar.
-// Yalnızca kayıt türü, klasör adı ve zaman kullanılır; konuşma içeriği saklanmaz.
+// Claude Code'un yerel oturum kayıtlarını (JSONL) salt okunur tarar.
+// Yalnızca kayıt türü, oturum başlığı, klasör adı ve zaman kullanılır; konuşma içeriği saklanmaz.
 // Durum sezgiseldir: izin bekleyen bir araç çağrısı ile uzun süren bir komut ayırt edilemez.
 internal sealed class SessionScanner
 {
@@ -27,11 +28,10 @@ internal sealed class SessionScanner
     public double StaleSeconds = 900;
     public double WaitExpirySeconds = 2700;
     public TimeSpan Horizon = TimeSpan.FromHours(3);
-    public int MaxPerProvider = 8;
+    public int MaxSessions = 8;
 
     private readonly Func<string, Dictionary<string, object>> parse;
     private readonly string claudeHome;
-    private readonly string codexHome;
     private readonly Dictionary<string, Entry> cache = new Dictionary<string, Entry>(StringComparer.OrdinalIgnoreCase);
 
     private sealed class Entry
@@ -40,21 +40,40 @@ internal sealed class SessionScanner
         public long Length;
         public string Kind;
         public string Cwd;
+        public string Title;
+        public bool HeadSearched;
     }
 
-    public SessionScanner(Func<string, Dictionary<string, object>> parse, string claudeHome, string codexHome)
+    public SessionScanner(Func<string, Dictionary<string, object>> parse, string claudeHome)
     {
         this.parse = parse;
         this.claudeHome = claudeHome;
-        this.codexHome = codexHome;
     }
 
-    public List<SessionInfo> Scan(DateTime nowUtc, bool claude, bool codex)
+    public List<SessionInfo> Scan(DateTime nowUtc)
     {
         var result = new List<SessionInfo>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (claude) result.AddRange(ScanProvider("claude", ClaudeFiles(nowUtc), nowUtc, seen));
-        if (codex) result.AddRange(ScanProvider("codex", CodexFiles(nowUtc), nowUtc, seen));
+        foreach (FileInfo file in ClaudeFiles(nowUtc).OrderByDescending(f => f.LastWriteTimeUtc).Take(MaxSessions))
+        {
+            seen.Add(file.FullName);
+            Entry entry;
+            if (!cache.TryGetValue(file.FullName, out entry) || entry.Write != file.LastWriteTimeUtc || entry.Length != file.Length)
+            {
+                entry = Inspect(file, entry);
+                cache[file.FullName] = entry;
+            }
+            double age = Math.Max(0, (nowUtc - file.LastWriteTimeUtc).TotalSeconds);
+            result.Add(new SessionInfo
+            {
+                Key = file.FullName,
+                SessionId = Path.GetFileNameWithoutExtension(file.Name),
+                Project = ProjectName(entry.Cwd, file),
+                Title = entry.Title,
+                State = Resolve(entry.Kind, age),
+                LastWriteUtc = file.LastWriteTimeUtc
+            });
+        }
         // Artık izlenmeyen dosyaların önbelleğini bırak
         foreach (string key in cache.Keys.Where(k => !seen.Contains(k)).ToList()) cache.Remove(key);
         return result.OrderByDescending(s => (int)s.State).ThenByDescending(s => s.LastWriteUtc).ToList();
@@ -73,35 +92,6 @@ internal sealed class SessionScanner
         return list;
     }
 
-    private List<FileInfo> CodexFiles(DateTime nowUtc)
-    {
-        var list = new List<FileInfo>();
-        if (String.IsNullOrEmpty(codexHome)) return list;
-        string sessions = Path.Combine(codexHome, "sessions");
-        if (!Directory.Exists(sessions)) return list;
-        DateTime min = nowUtc - Horizon;
-        // Codex kayıtları sessions/YYYY/MM/DD altında durur; yerel ve UTC takvimine göre son üç gün taranır.
-        var days = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < 3; i++)
-        {
-            days.Add(DayFolder(sessions, nowUtc.AddDays(-i)));
-            days.Add(DayFolder(sessions, nowUtc.ToLocalTime().AddDays(-i)));
-        }
-        foreach (string day in days)
-        {
-            var dir = new DirectoryInfo(day);
-            if (!dir.Exists) continue;
-            foreach (FileInfo file in SafeFiles(dir))
-                if (file.LastWriteTimeUtc >= min) list.Add(file);
-        }
-        return list;
-    }
-
-    private static string DayFolder(string root, DateTime date)
-    {
-        return Path.Combine(root, date.Year.ToString("0000"), date.Month.ToString("00"), date.Day.ToString("00"));
-    }
-
     private static IEnumerable<DirectoryInfo> SafeDirectories(DirectoryInfo root)
     {
         try { return root.GetDirectories(); }
@@ -114,31 +104,6 @@ internal sealed class SessionScanner
         try { return dir.GetFiles("*.jsonl", SearchOption.TopDirectoryOnly); }
         catch (IOException) { return new FileInfo[0]; }
         catch (UnauthorizedAccessException) { return new FileInfo[0]; }
-    }
-
-    private List<SessionInfo> ScanProvider(string provider, List<FileInfo> files, DateTime nowUtc, HashSet<string> seen)
-    {
-        var items = new List<SessionInfo>();
-        foreach (FileInfo file in files.OrderByDescending(f => f.LastWriteTimeUtc).Take(MaxPerProvider))
-        {
-            seen.Add(file.FullName);
-            Entry entry;
-            if (!cache.TryGetValue(file.FullName, out entry) || entry.Write != file.LastWriteTimeUtc || entry.Length != file.Length)
-            {
-                entry = Inspect(provider, file, entry);
-                cache[file.FullName] = entry;
-            }
-            double age = Math.Max(0, (nowUtc - file.LastWriteTimeUtc).TotalSeconds);
-            items.Add(new SessionInfo
-            {
-                Key = file.FullName,
-                Provider = provider,
-                Project = ProjectName(provider, entry.Cwd, file),
-                State = Resolve(entry.Kind, age),
-                LastWriteUtc = file.LastWriteTimeUtc
-            });
-        }
-        return items;
     }
 
     public SessionState Resolve(string kind, double age)
@@ -156,9 +121,10 @@ internal sealed class SessionScanner
         }
     }
 
-    private Entry Inspect(string provider, FileInfo file, Entry previous)
+    private Entry Inspect(FileInfo file, Entry previous)
     {
-        var entry = new Entry { Write = file.LastWriteTimeUtc, Length = file.Length, Cwd = previous != null ? previous.Cwd : null };
+        var entry = new Entry { Write = file.LastWriteTimeUtc, Length = file.Length };
+        if (previous != null) { entry.Cwd = previous.Cwd; entry.Title = previous.Title; entry.HeadSearched = previous.HeadSearched; }
         try
         {
             // Son satır çok uzun olabilir (araç çıktısı); tam satır bulunamazsa okuma penceresi büyütülür.
@@ -166,6 +132,9 @@ internal sealed class SessionScanner
             {
                 bool whole;
                 string text = ReadTail(file.FullName, size, out whole);
+                // Masaüstü uygulaması başlığı "custom-title" kaydı olarak düzenli aralıklarla yeniden yazar; en sonuncusu geçerlidir.
+                string title = ExtractString(text, "customTitle", true);
+                if (title != null) entry.Title = title;
                 string[] lines = text.Split('\n');
                 int first = whole ? 0 : 1;
                 int parsed = 0;
@@ -178,14 +147,20 @@ internal sealed class SessionScanner
                     catch { continue; }
                     if (item == null) continue;
                     parsed++;
-                    if (entry.Cwd == null) entry.Cwd = provider == "claude" ? Str(item, "cwd") : CodexCwd(item);
-                    string kind = provider == "claude" ? ClaudeKind(item) : CodexKind(item);
+                    if (entry.Cwd == null) entry.Cwd = Str(item, "cwd");
+                    string kind = ClaudeKind(item);
                     if (kind != null) { entry.Kind = kind; break; }
                 }
                 if (entry.Kind != null || whole || parsed > 0) break;
             }
             // Son satırlarda klasör yoksa dosyanın başından (ilk kayıtlar cwd taşır) okunur
             if (entry.Cwd == null) entry.Cwd = ExtractString(ReadHead(file.FullName, 65536), "cwd");
+            // Başlık sonda yoksa ilk başlık kaydı dosyanın başında aranır; başlıksız (terminal) oturumlarda bir kez denenir.
+            if (entry.Title == null && !entry.HeadSearched)
+            {
+                entry.HeadSearched = true;
+                entry.Title = ExtractString(ReadHead(file.FullName, 1048576), "customTitle");
+            }
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -228,38 +203,33 @@ internal sealed class SessionScanner
         return "active";
     }
 
-    // Codex CLI kaydı: type event_msg / response_item, payload.type
-    public static string CodexKind(Dictionary<string, object> item)
+    // Claude masaüstü uygulaması her Code oturumu için %APPDATA%\Claude\claude-code-sessions\<kuruluş>\<hesap>\local_<kimlik>.json yazar;
+    // içindeki cliSessionId, ~/.claude/projects altındaki kayıt dosyasının adıdır. Bulunamazsa (terminal oturumu) null.
+    public static string DesktopSessionId(string sessionId)
     {
-        string type = Str(item, "type");
-        var payload = Map(Get(item, "payload"));
-        string kind = Str(payload, "type");
-        if (kind == null) return null;
-        if (type == "event_msg")
+        if (String.IsNullOrEmpty(sessionId)) return null;
+        string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claude", "claude-code-sessions");
+        if (!Directory.Exists(root)) return null;
+        try
         {
-            if (kind == "task_complete" || kind == "turn_complete" || kind == "turn_aborted" || kind == "shutdown_complete") return "done";
-            if (kind.Contains("approval")) return "wait";
-            if (kind == "user_message" || kind == "task_started" || kind == "turn_started" || kind == "agent_reasoning") return "active";
-            if (kind == "agent_message") return "text";
-            return null;
+            foreach (string path in Directory.EnumerateFiles(root, "local_*.json", SearchOption.AllDirectories))
+            {
+                string text;
+                try { text = File.ReadAllText(path); }
+                catch (IOException) { continue; }
+                catch (UnauthorizedAccessException) { continue; }
+                if (ExtractString(text, "cliSessionId") != sessionId) continue;
+                string id = Path.GetFileNameWithoutExtension(path);
+                // Uygulamanın bağlantı işleyicisi yalnızca bu biçimi kabul eder
+                return System.Text.RegularExpressions.Regex.IsMatch(id, "^local_[A-Za-z0-9-]{1,64}$") ? id : null;
+            }
         }
-        if (type == "response_item")
-        {
-            if (kind == "function_call" || kind == "custom_tool_call" || kind == "local_shell_call") return "tool";
-            if (kind == "function_call_output" || kind == "custom_tool_call_output" || kind == "reasoning" || kind == "web_search_call") return "active";
-            if (kind == "message") return Str(payload, "role") == "assistant" ? "text" : "active";
-        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         return null;
     }
 
-    private static string CodexCwd(Dictionary<string, object> item)
-    {
-        string type = Str(item, "type");
-        if (type != "session_meta" && type != "turn_context") return null;
-        return Str(Map(Get(item, "payload")), "cwd");
-    }
-
-    public static string ProjectName(string provider, string cwd, FileInfo file)
+    public static string ProjectName(string cwd, FileInfo file)
     {
         if (!String.IsNullOrEmpty(cwd))
         {
@@ -268,14 +238,14 @@ internal sealed class SessionScanner
             string name = cut >= 0 ? trimmed.Substring(cut + 1) : trimmed;
             if (name.Length > 0) return name;
         }
-        if (provider == "claude" && file != null && file.Directory != null)
+        if (file != null && file.Directory != null)
         {
             // Klasör adı yolun kodlanmış hâlidir (C--Users-ad-proje); son parça gösterilir.
             string dir = file.Directory.Name;
             int dash = dir.LastIndexOf('-');
             return dash >= 0 && dash < dir.Length - 1 ? dir.Substring(dash + 1) : dir;
         }
-        return provider == "claude" ? "Claude oturumu" : "Codex oturumu";
+        return "Claude oturumu";
     }
 
     private static string ReadTail(string path, int max, out bool whole)
@@ -315,11 +285,12 @@ internal sealed class SessionScanner
     }
 
     // Tam JSON ayrıştırması yapmadan "anahtar":"değer" çiftinden metin çıkarır (çok büyük ilk satırlar için).
-    public static string ExtractString(string text, string key)
+    // fromEnd: metnin sonundan başlayarak arar, yani en son yazılmış değeri döndürür.
+    public static string ExtractString(string text, string key, bool fromEnd = false)
     {
         if (String.IsNullOrEmpty(text)) return null;
         string token = "\"" + key + "\"";
-        int at = text.IndexOf(token, StringComparison.Ordinal);
+        int at = fromEnd ? text.LastIndexOf(token, StringComparison.Ordinal) : text.IndexOf(token, StringComparison.Ordinal);
         while (at >= 0)
         {
             int i = at + token.Length;
@@ -351,7 +322,8 @@ internal sealed class SessionScanner
                     return null;
                 }
             }
-            at = text.IndexOf(token, at + token.Length, StringComparison.Ordinal);
+            if (!fromEnd) at = text.IndexOf(token, at + token.Length, StringComparison.Ordinal);
+            else at = at > 0 ? text.LastIndexOf(token, at - 1, StringComparison.Ordinal) : -1;
         }
         return null;
     }

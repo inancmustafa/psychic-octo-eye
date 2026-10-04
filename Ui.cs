@@ -29,6 +29,8 @@ internal static class Ui
 
     public static Color Alpha(Color c, byte a) { return Color.FromArgb(a, c.R, c.G, c.B); }
 
+    public static byte Opacity(double value) { return (byte)Math.Round(255 * Math.Max(0, Math.Min(1, value))); }
+
     public static double Luma(Color c) { return (0.2126 * c.R + 0.7152 * c.G + 0.0722 * c.B) / 255.0; }
 
     public static SolidColorBrush B(Color c)
@@ -49,13 +51,14 @@ internal static class Ui
     }
 }
 
-// Kullanıcı tercihleri; %LOCALAPPDATA%\UsageWidget\preferences.json (collect.mjs sağlayıcı anahtarlarını okur)
+// Kullanıcı tercihleri; %LOCALAPPDATA%\UsageWidget\preferences.json
 internal sealed class Prefs
 {
     public string Edge = "top";          // top | bottom | left | right
     public double Offset = 0.5;          // kenar boyunca konum (0..1)
     public string Monitor = "";
     public string Surface = "solid";     // solid | dark | glass
+    public int Transparency = 20;        // cam yüzeyin saydamlığı, % (0..85)
     public string Tone = "ink";          // ink | graphite | paper
     public string Accent = "#9FD08A";
     public string Size = "m";            // s | m | l
@@ -63,8 +66,6 @@ internal sealed class Prefs
     public bool FoldFullscreen = true;
     public bool NotifyPeek = true;
     public bool NotifySound = false;
-    public bool Claude = true;
-    public bool Codex = true;
 
     public static Prefs From(Dictionary<string, object> map)
     {
@@ -80,15 +81,12 @@ internal sealed class Prefs
         p.Monitor = Str(map, "monitor") ?? "";
         double offset;
         if (Num(map, "offset", out offset)) p.Offset = Math.Max(0, Math.Min(1, offset));
+        // Üst sınır: tamamen saydam piksel tıklamayı alttaki pencereye geçirir, çentik üzerine gelince açılmaz olur.
+        double transparency;
+        if (Num(map, "transparency", out transparency)) p.Transparency = (int)Math.Round(Math.Max(0, Math.Min(85, transparency)));
         p.FoldFullscreen = Flag(map, "foldFullscreen", p.FoldFullscreen);
         p.NotifyPeek = Flag(map, "notifyPeek", p.NotifyPeek);
         p.NotifySound = Flag(map, "notifySound", p.NotifySound);
-        var providers = Get(map, "providers") as Dictionary<string, object>;
-        if (providers != null)
-        {
-            p.Claude = Flag(providers, "claude", true);
-            p.Codex = Flag(providers, "codex", true);
-        }
         return p;
     }
 
@@ -96,10 +94,9 @@ internal sealed class Prefs
     {
         return new Dictionary<string, object>
         {
-            { "edge", Edge }, { "offset", Offset }, { "monitor", Monitor }, { "surface", Surface }, { "tone", Tone },
+            { "edge", Edge }, { "offset", Offset }, { "monitor", Monitor }, { "surface", Surface }, { "transparency", Transparency }, { "tone", Tone },
             { "accent", Accent }, { "size", Size }, { "reveal", Reveal }, { "foldFullscreen", FoldFullscreen },
-            { "notifyPeek", NotifyPeek }, { "notifySound", NotifySound },
-            { "providers", new Dictionary<string, object> { { "claude", Claude }, { "codex", Codex } } }
+            { "notifyPeek", NotifyPeek }, { "notifySound", NotifySound }
         };
     }
 
@@ -142,6 +139,7 @@ internal sealed class Theme
     public Color Surface, Raised, Line, Text, Sub, Faint, Track, Accent, OnAccent, Warn, Crit, Stale;
     public bool Light;
     public string Kind;
+    public double GlassOpacity;
 
     public static readonly string[] Tones = { "ink", "graphite", "paper" };
 
@@ -159,6 +157,7 @@ internal sealed class Theme
     {
         var t = new Theme();
         t.Kind = p.Surface;
+        t.GlassOpacity = 1 - p.Transparency / 100.0;
         Color accent = Ui.Parse(p.Accent, Ui.Hex("#9FD08A"));
         if (p.Tone == "paper")
         {
@@ -192,7 +191,9 @@ internal sealed class Theme
     {
         if (Kind == "glass")
         {
-            var gradient = new LinearGradientBrush(Ui.Alpha(Ui.Mix(Surface, Colors.White, Light ? 0.35 : 0.09), 0xCC), Ui.Alpha(Surface, 0xB0), 90);
+            // Üst kenar ayarlanan opaklıkta, alt kenar biraz daha saydam (%20 saydamlıkta eski sabit 0xCC → 0xB0 geçişi)
+            byte top = Ui.Opacity(GlassOpacity), bottom = Ui.Opacity(GlassOpacity * 0xB0 / 0xCC);
+            var gradient = new LinearGradientBrush(Ui.Alpha(Ui.Mix(Surface, Colors.White, Light ? 0.35 : 0.09), top), Ui.Alpha(Surface, bottom), 90);
             gradient.Freeze();
             return gradient;
         }
@@ -218,7 +219,7 @@ internal sealed class Theme
     }
 }
 
-// Kullanım halkası: iz + yay + ortada değer + köşede oturum noktası
+// Kullanım halkası: iz + yay (+ isteğe bağlı iç halka) + ortada değer + köşede oturum noktası
 internal sealed class RingView
 {
     public readonly Grid Root;
@@ -226,10 +227,13 @@ internal sealed class RingView
     public readonly TextBlock Value;
     public readonly Shapes.Ellipse Dot;
     public SessionState DotState = SessionState.None;
+    public readonly Shapes.Path InnerArc;
     private readonly double diameter;
     private readonly double stroke;
+    private readonly double innerRadius;
 
-    public RingView(double diameter, double stroke, double fontSize, bool showValue, Theme theme)
+    // innerStroke > 0: dış halkanın içinde, arada boşlukla ikinci (iç) halka
+    public RingView(double diameter, double stroke, double fontSize, bool showValue, Theme theme, double innerStroke = 0)
     {
         this.diameter = diameter;
         this.stroke = stroke;
@@ -237,6 +241,15 @@ internal sealed class RingView
         Root.Children.Add(new Shapes.Ellipse { Width = diameter, Height = diameter, Stroke = Ui.B(theme.Track), StrokeThickness = stroke });
         Arc = new Shapes.Path { StrokeThickness = stroke, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
         Root.Children.Add(Arc);
+        if (innerStroke > 0)
+        {
+            double c = diameter / 2, gap = Math.Max(1, stroke * 0.4);
+            innerRadius = (diameter - stroke) / 2 - stroke / 2 - gap - innerStroke / 2;
+            // İz de yayla aynı koordinatlarda çizilir; hizalama yuvarlaması ikisini kaydırmasın
+            Root.Children.Add(new Shapes.Path { Data = new EllipseGeometry(new Point(c, c), innerRadius, innerRadius), Stroke = Ui.B(theme.Track), StrokeThickness = innerStroke });
+            InnerArc = new Shapes.Path { StrokeThickness = innerStroke, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
+            Root.Children.Add(InnerArc);
+        }
         if (showValue)
         {
             Value = new TextBlock { FontSize = fontSize, FontWeight = FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = Ui.B(theme.Text) };
@@ -255,13 +268,20 @@ internal sealed class RingView
     public void Set(double percent, Color color)
     {
         Arc.Stroke = Ui.B(color);
-        Arc.Data = BuildArc(percent);
+        Arc.Data = BuildArc(percent, (diameter - stroke) / 2);
     }
 
-    private Geometry BuildArc(double percent)
+    public void SetInner(double percent, Color color)
+    {
+        if (InnerArc == null) return;
+        InnerArc.Stroke = Ui.B(color);
+        InnerArc.Data = BuildArc(percent, innerRadius);
+    }
+
+    private Geometry BuildArc(double percent, double r)
     {
         if (percent <= 0.05) return null;
-        double r = (diameter - stroke) / 2, c = diameter / 2;
+        double c = diameter / 2;
         if (percent >= 99.95) return new EllipseGeometry(new Point(c, c), r, r);
         double angle = percent / 100 * Math.PI * 2;
         var figure = new PathFigure { StartPoint = new Point(c, c - r), IsClosed = false };

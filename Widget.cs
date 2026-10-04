@@ -49,14 +49,18 @@ internal static class Program
     }
 }
 
-// Sağlayıcı verisinin ekrana hazır özeti
+// Claude kota verisinin ekrana hazır özeti
 internal sealed class ProviderView
 {
     public bool HasData;
     public string Status = "";
     public Dictionary<string, object>[] Windows = new Dictionary<string, object>[0];
     public bool Fresh;
-    public double? Used;
+    public double? Session;      // iç halka: 5 saatlik oturum kotası
+    public double? Weekly;       // dış halka: en dolu haftalık kota (tüm modeller / Sonnet / Opus)
+    public string WeeklyId;
+    public double? Used;         // gösterilen yüzde: iki halkadan yüksek olanı
+    public double? ReopenAt;     // bir kota dolduysa kullanımın yeniden açılacağı an (ms)
     public double? Age;
 }
 
@@ -64,15 +68,7 @@ internal sealed partial class Widget
 {
     public readonly Window Window;
 
-    private static readonly string[] ProviderIds = { "claude", "codex" };
-    private static readonly Dictionary<string, string> Names = new Dictionary<string, string> { { "claude", "Claude" }, { "codex", "Codex" } };
-    private static readonly Dictionary<string, string> Glyphs = new Dictionary<string, string> { { "claude", "✳" }, { "codex", "◉" } };
-    // Sağlayıcının kendi kullanım sayfası; adres değişirse yalnızca burası güncellenir.
-    private static readonly Dictionary<string, string> UsagePages = new Dictionary<string, string>
-    {
-        { "claude", "https://claude.ai/settings/usage" },
-        { "codex", "https://chatgpt.com/codex/settings/usage" }
-    };
+    private const string Glyph = "✳";
     private static readonly CultureInfo Tr = new CultureInfo("tr-TR");
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     private const string DefaultNote = "Yüzdeler kullanılan kotadır · 5 dk’da bir yenilenir.";
@@ -81,8 +77,8 @@ internal sealed partial class Widget
     private readonly string stateDir = IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UsageWidget");
     private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue };
     private readonly SessionScanner scanner;
-    private readonly bool demo, noAnim, backdrop;
-    private readonly string snapshot, snapshotCard;
+    private readonly bool demo, noAnim, backdrop, snapshotCard, refreshOnStart;
+    private readonly string snapshot;
 
     private Prefs prefs;
     private Theme theme;
@@ -90,21 +86,19 @@ internal sealed partial class Widget
     private Dictionary<string, object> latest = new Dictionary<string, object>();
     private List<SessionInfo> sessions = new List<SessionInfo>();
     private Dictionary<string, SessionState> lastStates;
-    private Process collector;
     private string lastRead = "", note = DefaultNote;
     private int version, cardVersion = -1;
     private DateTime cardBuilt = DateTime.MinValue;
 
     // Arayüz öğeleri (tema veya kenar değişince yeniden kurulur)
-    private Border notch, shelf, card;
+    private Border notch, shelf, card, slot;
     private FrameworkElement sliverView, idleView, expandedView;
-    private readonly Dictionary<string, RingView> rings = new Dictionary<string, RingView>();
-    private readonly Dictionary<string, RingView> minis = new Dictionary<string, RingView>();
-    private readonly Dictionary<string, TextBlock> miniTexts = new Dictionary<string, TextBlock>();
-    private readonly Dictionary<string, Border> slots = new Dictionary<string, Border>();
+    private RingView ring, mini;
+    private TextBlock miniText, refreshGlyph, ringLabel;
+    private bool reopenPending;
+    private readonly List<Countdown> countdowns = new List<Countdown>();
 
-    private bool expanded, shelfOpen, cardPinned, dragging, peeking, hiddenForFullscreen, scanning;
-    private string cardProvider, pendingCard;
+    private bool expanded, shelfOpen, cardOpen, cardPinned, dragging, peeking, hiddenForFullscreen, scanning, collecting;
     private double dpiScale = 1;
     private IntPtr hwnd = IntPtr.Zero;
     private Window settingsWindow;
@@ -120,6 +114,7 @@ internal sealed partial class Widget
     private readonly DispatcherTimer peekTimer = new DispatcherTimer();
     private readonly DispatcherTimer sessionTimer = new DispatcherTimer();
     private readonly DispatcherTimer screenTimer = new DispatcherTimer();
+    private readonly DispatcherTimer countdownTimer = new DispatcherTimer();
 
     private string PrefsPath { get { return IOPath.Combine(stateDir, "preferences.json"); } }
     private bool Vertical { get { return prefs.Edge == "left" || prefs.Edge == "right"; } }
@@ -132,15 +127,16 @@ internal sealed partial class Widget
     {
         Directory.CreateDirectory(stateDir);
         snapshot = Arg(args, "--snapshot");
-        snapshotCard = Arg(args, "--card");
+        snapshotCard = args.Contains("--card");
         demo = args.Contains("--demo");
         backdrop = args.Contains("--backdrop");
+        refreshOnStart = args.Contains("--refresh");
         noAnim = snapshot != null;
         runtime = Read(IOPath.Combine(root, "runtime.json"));
 
-        // Kalıcı tercihler + komut satırı geçersiz kılmaları (--edge, --tone, --surface, --size, --reveal, --accent)
+        // Kalıcı tercihler + komut satırı geçersiz kılmaları (--edge, --tone, --surface, --transparency, --size, --reveal, --accent)
         var map = Prefs.From(Read(PrefsPath)).ToMap();
-        foreach (string key in new[] { "edge", "tone", "surface", "size", "reveal", "accent" })
+        foreach (string key in new[] { "edge", "tone", "surface", "transparency", "size", "reveal", "accent" })
         {
             string value = Arg(args, "--" + key);
             if (value != null) map[key] = value;
@@ -149,7 +145,7 @@ internal sealed partial class Widget
 
         try { using (var g = Drawing.Graphics.FromHwnd(IntPtr.Zero)) dpiScale = g.DpiX / 96.0; }
         catch { dpiScale = 1; }
-        scanner = new SessionScanner(ParseJson, ClaudeHome(), CodexHome());
+        scanner = new SessionScanner(ParseJson, ClaudeHome());
 
         Window = new Window
         {
@@ -190,12 +186,11 @@ internal sealed partial class Widget
         {
             cardTimer.Stop();
             if (cardPinned || peeking || card == null || card.IsMouseOver) return;
-            Border slot;
-            if (cardProvider != null && slots.TryGetValue(cardProvider, out slot) && slot.IsMouseOver) return;
+            if (slot != null && slot.IsMouseOver) return;
             HideCard();
         };
         hoverTimer.Interval = TimeSpan.FromMilliseconds(200);
-        hoverTimer.Tick += delegate { hoverTimer.Stop(); if (pendingCard != null) ShowCard(pendingCard); pendingCard = null; };
+        hoverTimer.Tick += delegate { hoverTimer.Stop(); ShowCard(); };
         peekTimer.Interval = TimeSpan.FromSeconds(4.5);
         peekTimer.Tick += delegate
         {
@@ -211,17 +206,20 @@ internal sealed partial class Widget
         sessionTimer.Tick += delegate { ScanSessions(); };
         screenTimer.Interval = TimeSpan.FromSeconds(1.5);
         screenTimer.Tick += delegate { CheckFullscreen(); };
+        // Geri sayım saniye hassasiyetinde; 250 ms'de bir bakılır ki gösterilen saniye gerçek saatten geri kalmasın
+        countdownTimer.Interval = TimeSpan.FromMilliseconds(250);
+        countdownTimer.Tick += delegate { UpdateCountdowns(); };
 
         tray = new Forms.NotifyIcon { Text = "Usage Notch", Visible = false };
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Göster", null, delegate { Peek(null); });
+        menu.Items.Add("Göster", null, delegate { Peek(); });
         menu.Items.Add("Ayarlar…", null, delegate { OpenSettings(); });
         menu.Items.Add("Şimdi yenile", null, delegate { Refresh(true); });
         menu.Items.Add("Kullanım kılavuzu", null, delegate { OpenHelp(); });
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Çıkış", null, delegate { Window.Close(); });
         tray.ContextMenuStrip = menu;
-        tray.MouseClick += (s, e) => { if (e.Button == Forms.MouseButtons.Left) Peek(null); };
+        tray.MouseClick += (s, e) => { if (e.Button == Forms.MouseButtons.Left) Peek(); };
 
         displayChanged = delegate { Window.Dispatcher.BeginInvoke(new Action(Place)); };
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += displayChanged;
@@ -229,19 +227,18 @@ internal sealed partial class Widget
         Window.Closed += delegate
         {
             SavePrefs();
-            foreach (var timer in new[] { clock, poll, fold, cardTimer, hoverTimer, peekTimer, sessionTimer, screenTimer }) timer.Stop();
+            foreach (var timer in new[] { clock, poll, fold, cardTimer, hoverTimer, peekTimer, sessionTimer, screenTimer, countdownTimer }) timer.Stop();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= displayChanged;
             if (settingsWindow != null) settingsWindow.Close();
             tray.Visible = false;
             tray.Dispose();
             if (trayIconHandle != IntPtr.Zero) Native.DestroyIcon(trayIconHandle);
-            if (collector != null) collector.Dispose();
         };
 
         BuildUi();
         Place();
         if (demo) LoadDemo();
-        else if (snapshot != null) { try { sessions = scanner.Scan(DateTime.UtcNow, prefs.Claude, prefs.Codex); } catch { } }
+        else if (snapshot != null) { try { sessions = scanner.Scan(DateTime.UtcNow); } catch { } }
         Tick();
         UpdateTrayIcon();
         tray.Visible = snapshot == null;
@@ -251,13 +248,13 @@ internal sealed partial class Widget
             if (snapshot != null)
             {
                 SetExpanded(true);
-                if (snapshotCard != null) ShowCard(snapshotCard);
+                if (snapshotCard) ShowCard();
                 Window.Dispatcher.BeginInvoke(new Action(TakeSnapshot), DispatcherPriority.ApplicationIdle);
                 return;
             }
-            clock.Start(); poll.Start(); sessionTimer.Start(); screenTimer.Start();
+            clock.Start(); poll.Start(); sessionTimer.Start(); screenTimer.Start(); countdownTimer.Start();
             ScanSessions();
-            Refresh(false);
+            Refresh(refreshOnStart);
         };
     }
 
@@ -279,12 +276,6 @@ internal sealed partial class Widget
     {
         string custom = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
         return !String.IsNullOrEmpty(custom) ? custom : IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-    }
-
-    private static string CodexHome()
-    {
-        string custom = Environment.GetEnvironmentVariable("CODEX_HOME");
-        return !String.IsNullOrEmpty(custom) ? custom : IOPath.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
     }
 
     private Dictionary<string, object> Read(string path)
@@ -311,11 +302,6 @@ internal sealed partial class Widget
         return reset.HasValue && reset.Value <= Now;
     }
 
-    private string[] EnabledIds()
-    {
-        return ProviderIds.Where(id => id == "claude" ? prefs.Claude : prefs.Codex).ToArray();
-    }
-
     private void SavePrefs()
     {
         if (snapshot != null) return;
@@ -325,10 +311,10 @@ internal sealed partial class Widget
 
     // ───────────────────────── Veri ─────────────────────────
 
-    private ProviderView Describe(string id)
+    private ProviderView Describe()
     {
         var view = new ProviderView();
-        var data = Map(Get(latest, id));
+        var data = Map(Get(latest, "claude"));
         view.HasData = data.Count > 0;
         view.Status = Text(data, "status");
         var sequence = Get(data, "windows") as System.Collections.IEnumerable;
@@ -336,28 +322,53 @@ internal sealed partial class Widget
         double? updated = Number(data, "updatedAt");
         view.Age = updated.HasValue ? (double?)((Now - updated.Value) / 1000) : null;
         view.Fresh = view.Status == "ok" && view.Age.HasValue && view.Age.Value <= 660 && !view.Windows.Any(Expired);
-        if (view.Windows.Length > 0 && !Expired(view.Windows[0])) view.Used = Number(view.Windows[0], "usedPercent");
+        foreach (var quota in view.Windows)
+        {
+            double? used = Number(quota, "usedPercent");
+            if (Expired(quota) || !used.HasValue) continue;
+            string id = Text(quota, "id");
+            if (id == "five_hour") view.Session = used;
+            else if (id.StartsWith("seven_day", StringComparison.Ordinal) && (!view.Weekly.HasValue || used.Value > view.Weekly.Value)) { view.Weekly = used; view.WeeklyId = id; }
+            // Dolan her kota kullanımı kapatır; açılma anı dolu kotalardan en geç yenileneninkidir
+            double? reset = Number(quota, "resetsAt");
+            if (used.Value >= 100 && reset.HasValue && (!view.ReopenAt.HasValue || reset.Value > view.ReopenAt.Value)) view.ReopenAt = reset;
+        }
+        if (view.Session.HasValue || view.Weekly.HasValue) view.Used = Math.Max(view.Session ?? 0, view.Weekly ?? 0);
         return view;
     }
 
-    private Color RingColor(ProviderView view)
+    private Color RingColor(ProviderView view, double? used)
     {
-        if (!view.Used.HasValue || !view.Fresh) return theme.Stale;
-        return theme.UsageColor(view.Used.Value);
+        if (!used.HasValue || !view.Fresh) return theme.Stale;
+        return theme.UsageColor(used.Value);
     }
 
     private static string ValueText(ProviderView view)
     {
         if (view.Status == "login_required" || view.Status == "forbidden") return "!";
-        return view.Used.HasValue ? "%" + Math.Round(view.Used.Value).ToString(Inv) : "—";
+        return view.Used.HasValue ? PercentText(view.Used.Value) : "—";
     }
 
-    private SessionState Activity(string id)
+    // %100 yalnızca kota gerçekten dolunca yazılır; %99,6 "%99" görünür, yoksa dolu sanılıp açılma süresi aranırdı.
+    private static string PercentText(double used)
     {
-        var list = sessions.Where(s => s.Provider == id).ToList();
-        if (list.Any(s => s.State == SessionState.Waiting)) return SessionState.Waiting;
-        if (list.Any(s => s.State == SessionState.Working)) return SessionState.Working;
-        if (list.Any(s => s.State == SessionState.Finished && (DateTime.UtcNow - s.LastWriteUtc).TotalMinutes < 10)) return SessionState.Finished;
+        return "%" + (used >= 100 ? 100 : Math.Min(99, Math.Round(used))).ToString(Inv);
+    }
+
+    // Kullanımın açılmasına kalan süre: "2:36:12", bir günden uzunsa "3g 10:05:12" (dar yerde "3g 10sa")
+    private static string Remaining(double resetMs, bool compact)
+    {
+        var span = TimeSpan.FromSeconds(Math.Max(0, Math.Ceiling((resetMs - Now) / 1000)));
+        if (span.Days > 0)
+            return span.Days.ToString(Inv) + "g " + (compact ? span.Hours.ToString(Inv) + "sa" : String.Format(Inv, "{0:00}:{1:00}:{2:00}", span.Hours, span.Minutes, span.Seconds));
+        return String.Format(Inv, "{0}:{1:00}:{2:00}", span.Hours, span.Minutes, span.Seconds);
+    }
+
+    private SessionState Activity()
+    {
+        if (sessions.Any(s => s.State == SessionState.Waiting)) return SessionState.Waiting;
+        if (sessions.Any(s => s.State == SessionState.Working)) return SessionState.Working;
+        if (sessions.Any(s => s.State == SessionState.Finished && (DateTime.UtcNow - s.LastWriteUtc).TotalMinutes < 10)) return SessionState.Finished;
         return SessionState.None;
     }
 
@@ -379,45 +390,41 @@ internal sealed partial class Widget
             }
             catch { note = "Veri okunamadı; yeniden denenecek."; changed = true; }
         }
-        if (collector != null && collector.HasExited)
-        {
-            int code = collector.ExitCode;
-            collector.Dispose();
-            collector = null;
-            note = code == 0 ? DefaultNote : "Veri yenilenemedi; son ölçüm gösteriliyor.";
-            changed = true;
-        }
         if (changed) version++;
         Render();
     }
 
+    // Kota ölçümü arka planda çalışır; bitince usage.json hemen okunur.
     private void Refresh(bool force)
     {
         if (demo) { note = "Örnek modunda gerçek veri okunmaz."; version++; Render(); return; }
-        if (collector != null && !collector.HasExited) return;
-        if (collector != null) { collector.Dispose(); collector = null; }
-        try
-        {
-            string node = Text(runtime, "nodePath");
-            if (node.Length == 0) node = "node";
-            collector = Process.Start(new ProcessStartInfo(node, "\"" + IOPath.Combine(root, "collect.mjs") + "\"" + (force ? " --force" : ""))
-            {
-                UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = root
-            });
-            note = "Kullanım bilgisi alınıyor…";
-        }
-        catch { note = "Bağlantı başlatılamadı. Setup.ps1 ile yolları yenile."; }
+        if (collecting) return;
+        collecting = true;
+        note = "Kullanım bilgisi alınıyor…";
         version++;
         Render();
+        string dir = stateDir, home = ClaudeHome();
+        Task.Factory.StartNew(() => Collector.Run(dir, home, force)).ContinueWith(task =>
+        {
+            bool failed = task.IsFaulted;
+            string status = failed ? null : task.Result;
+            Window.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                collecting = false;
+                note = failed ? "Veri yenilenemedi; son ölçüm gösteriliyor." : DefaultNote;
+                version++;
+                Tick();
+                if (status == "login_required") AutoLogin();
+            }));
+        });
     }
 
     private void ScanSessions()
     {
         if (demo || scanning) return;
         scanning = true;
-        bool claude = prefs.Claude, codex = prefs.Codex;
         DateTime now = DateTime.UtcNow;
-        Task.Factory.StartNew(() => scanner.Scan(now, claude, codex)).ContinueWith(task =>
+        Task.Factory.StartNew(() => scanner.Scan(now)).ContinueWith(task =>
         {
             List<SessionInfo> result = task.IsFaulted ? null : task.Result;
             Window.Dispatcher.BeginInvoke(new Action(() =>
@@ -430,21 +437,17 @@ internal sealed partial class Widget
 
     private void OnSessions(List<SessionInfo> list)
     {
-        string notifyProvider = null;
         SessionState notifyState = SessionState.None;
         var map = new Dictionary<string, SessionState>();
         foreach (var session in list)
         {
             map[session.Key] = session.State;
             SessionState before;
-            // Çalışırken bitti ya da onay beklemeye geçti → kısa süre göster
+            // Çalışırken bitti ya da onay beklemeye geçti → kısa süre göster (onay bekleme öncelikli)
             if (lastStates != null && lastStates.TryGetValue(session.Key, out before) && before == SessionState.Working
                 && (session.State == SessionState.Finished || session.State == SessionState.Waiting)
-                && (notifyProvider == null || session.State == SessionState.Waiting))
-            {
-                notifyProvider = session.Provider;
+                && (notifyState == SessionState.None || session.State == SessionState.Waiting))
                 notifyState = session.State;
-            }
         }
         bool changed = lastStates == null || lastStates.Count != map.Count || map.Any(pair =>
         {
@@ -455,9 +458,9 @@ internal sealed partial class Widget
         sessions = list;
         if (changed) version++;
         Render();
-        if (notifyProvider != null && !hiddenForFullscreen)
+        if (notifyState != SessionState.None && !hiddenForFullscreen)
         {
-            if (prefs.NotifyPeek) Peek(notifyProvider);
+            if (prefs.NotifyPeek) Peek();
             if (prefs.NotifySound)
             {
                 if (notifyState == SessionState.Waiting) System.Media.SystemSounds.Exclamation.Play();
@@ -474,17 +477,16 @@ internal sealed partial class Widget
         latest = new Dictionary<string, object>
         {
             { "claude", new Dictionary<string, object> { { "name", "Claude" }, { "status", "ok" }, { "updatedAt", now - 95000 },
-                { "windows", new object[] { quota("five_hour", "Oturum · 5 saat", 42, 2.22), quota("seven_day", "Haftalık · tüm modeller", 18, 98.6), quota("seven_day_opus", "Haftalık · Opus", 7, 98.6) } } } },
-            { "codex", new Dictionary<string, object> { { "name", "Codex" }, { "status", "ok" }, { "updatedAt", now - 40000 },
-                { "windows", new object[] { quota("primary", "5 saatlik", 82, 1.1), quota("secondary", "Haftalık", 31, 61.4) } } } }
+                { "windows", new object[] { quota("five_hour", "Oturum · 5 saat", 42, 2.22), quota("seven_day", "Haftalık · tüm modeller", 18, 98.6), quota("seven_day_opus", "Haftalık · Opus", 7, 98.6) } } } }
         };
         DateTime u = DateTime.UtcNow;
+        // SessionScanner sıralamasıyla aynı: önce bekleyen, sonra çalışan, en son bitenler
         sessions = new List<SessionInfo>
         {
-            new SessionInfo { Key = "d1", Provider = "claude", Project = "usage-widget", State = SessionState.Working, LastWriteUtc = u.AddSeconds(-3) },
-            new SessionInfo { Key = "d2", Provider = "claude", Project = "otomasyon-araclari", State = SessionState.Finished, LastWriteUtc = u.AddMinutes(-12) },
-            new SessionInfo { Key = "d3", Provider = "codex", Project = "kinematik-analiz", State = SessionState.Waiting, LastWriteUtc = u.AddSeconds(-41) },
-            new SessionInfo { Key = "d4", Provider = "codex", Project = "rapor-betikleri", State = SessionState.Finished, LastWriteUtc = u.AddMinutes(-35) }
+            new SessionInfo { Key = "d1", Project = "kinematik-analiz", State = SessionState.Waiting, LastWriteUtc = u.AddSeconds(-41) },
+            new SessionInfo { Key = "d2", Project = "usage-widget", State = SessionState.Working, LastWriteUtc = u.AddSeconds(-3) },
+            new SessionInfo { Key = "d3", Project = "otomasyon-araclari", State = SessionState.Finished, LastWriteUtc = u.AddMinutes(-12) },
+            new SessionInfo { Key = "d4", Project = "rapor-betikleri", State = SessionState.Finished, LastWriteUtc = u.AddMinutes(-35) }
         };
         version++;
     }
@@ -572,13 +574,12 @@ internal sealed partial class Widget
         SetExpanded(false);
     }
 
-    private void Peek(string id)
+    private void Peek()
     {
         if (hiddenForFullscreen) return;
         peeking = true;
         SetExpanded(true);
-        string target = id ?? EnabledIds().FirstOrDefault();
-        if (target != null) ShowCard(target);
+        ShowCard();
         peekTimer.Stop();
         peekTimer.Start();
     }
@@ -612,25 +613,76 @@ internal sealed partial class Widget
         catch { tray.Icon = Drawing.SystemIcons.Information; }
     }
 
+    // Örn. "Claude · 5 saat %58 · Haftalık %26" ya da kota doluysa sonuna " · açılır 2:36:12"
     private void UpdateTrayText()
     {
-        var parts = EnabledIds().Select(id => Names[id] + " " + ValueText(Describe(id))).ToArray();
-        string text = parts.Length == 0 ? "Usage Notch" : String.Join(" · ", parts);
-        tray.Text = text.Length > 63 ? text.Substring(0, 63) : text;
+        ProviderView view = Describe();
+        string text = "Claude";
+        if (view.Session.HasValue) text += " · 5 saat " + PercentText(view.Session.Value);
+        if (view.Weekly.HasValue) text += " · Haftalık " + PercentText(view.Weekly.Value);
+        if (!view.Used.HasValue) text += " " + ValueText(view);
+        if (view.ReopenAt.HasValue) text += " · açılır " + Remaining(view.ReopenAt.Value, true);
+        if (text.Length > 63) text = text.Substring(0, 63);
+        if (tray.Text != text) tray.Text = text;
     }
 
-    private void Connect(string id)
+    // Oturum satırına tıklama: Claude masaüstünde o Code oturumuna git.
+    // claude://code/continue?session=local_… masaüstü uygulamasının kendi bağlantısıdır; belgelenmemiştir, sürümle değişebilir.
+    private void OpenSession(SessionInfo session)
+    {
+        string id = SessionScanner.DesktopSessionId(session.SessionId);
+        if (id == null)
+        {
+            note = "Bu oturum Claude masaüstünde bulunamadı (terminalden açılmış olabilir).";
+            version++;
+            Render();
+            return;
+        }
+        OpenUrl("claude://code/continue?session=" + id);
+        Fold();
+    }
+
+    private void Connect()
     {
         try
         {
-            string executable = Text(runtime, id + "Path");
-            if (executable.Length == 0) executable = id;
-            Process.Start(new ProcessStartInfo(executable, id == "claude" ? "auth login --claudeai" : "login") { UseShellExecute = true });
+            string executable = Text(runtime, "claudePath");
+            if (executable.Length == 0) executable = "claude";
+            Process.Start(new ProcessStartInfo(executable, "auth login --claudeai") { UseShellExecute = true });
             note = "Tarayıcıda girişini tamamla, ardından Yenile’ye bas.";
         }
         catch { note = "Giriş açılamadı. Kullanım kılavuzunu kontrol et."; }
         version++;
         Render();
+    }
+
+    // Anahtar reddedilince (401) Baslat.bat kendiliğinden açılır: girişi yeniler, widget'ı yeniden başlatır.
+    // Son açılış 1 saatten yeniyse ya da o pencere hâlâ açıksa yeniden açılmaz; kayıt widget yeniden başlasa da kalır.
+    private void AutoLogin()
+    {
+        string script = IOPath.Combine(root, "Baslat.bat");
+        string stamp = IOPath.Combine(stateDir, "oto-baslat.txt");
+        if (demo || snapshot != null || !File.Exists(script)) return;
+        try
+        {
+            string[] last = File.Exists(stamp) ? File.ReadAllText(stamp).Split(' ') : new string[0];
+            double at;
+            int pid;
+            if (last.Length == 2 && Double.TryParse(last[0], NumberStyles.Float, Inv, out at) && Int32.TryParse(last[1], out pid)
+                && (Now - at < 3600000 || Alive(pid))) return;
+            Process started = Process.Start(new ProcessStartInfo(script, "oto") { UseShellExecute = true, WorkingDirectory = root });
+            File.WriteAllText(stamp, ((long)Now).ToString(Inv) + " " + (started != null ? started.Id : 0).ToString(Inv));
+            note = "Giriş süresi doldu; Baslat.bat açıldı, tarayıcıda girişi tamamla.";
+        }
+        catch { note = "Giriş süresi doldu; Baslat.bat açılamadı, elle çalıştır."; }
+        version++;
+        Render();
+    }
+
+    private static bool Alive(int pid)
+    {
+        try { using (Process p = Process.GetProcessById(pid)) return !p.HasExited && p.ProcessName.Equals("cmd", StringComparison.OrdinalIgnoreCase); }
+        catch { return false; }
     }
 
     private static void OpenUrl(string url)
